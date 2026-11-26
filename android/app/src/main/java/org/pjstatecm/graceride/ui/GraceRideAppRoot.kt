@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,6 +38,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.AltRoute
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.CloudOff
@@ -59,6 +62,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -83,10 +87,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.core.net.toUri
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Me
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.platform.BiometricSignResult
 import org.pjstatecm.graceride.ui.components.GraceRideLandingSplash
 import org.pjstatecm.graceride.ui.components.GraceRideSpringEasing
@@ -115,8 +122,11 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.AuthEvent
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.ui.screens.admin.AdminMembersScreen
+import org.pjstatecm.graceride.ui.screens.announcements.AnnouncementsScreen
 import org.pjstatecm.graceride.ui.screens.costs.CostsScreen
 import org.pjstatecm.graceride.ui.screens.events.EventDetailScreen
+import org.pjstatecm.graceride.ui.screens.events.EventFormScreen
 import org.pjstatecm.graceride.ui.screens.events.EventsScreen
 import org.pjstatecm.graceride.ui.screens.history.HistoryScreen
 import org.pjstatecm.graceride.ui.screens.home.HomeScreen
@@ -126,13 +136,20 @@ import org.pjstatecm.graceride.ui.screens.login.TermsScreen
 import org.pjstatecm.graceride.ui.screens.login.UnlockScreen
 import org.pjstatecm.graceride.ui.screens.notifications.NotificationsScreen
 import org.pjstatecm.graceride.ui.screens.profile.DriverSettingsScreen
+import org.pjstatecm.graceride.ui.screens.profile.FamilyScreen
 import org.pjstatecm.graceride.ui.screens.profile.GrokBotStudioScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProfileScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProxyRidersScreen
 import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesScreen
+import org.pjstatecm.graceride.ui.screens.public.CarePassScreen
+import org.pjstatecm.graceride.ui.screens.public.InviteScreen
+import org.pjstatecm.graceride.ui.screens.public.LicensesScreen
+import org.pjstatecm.graceride.ui.screens.public.VisitScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideDetailScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideNewScreen
 import org.pjstatecm.graceride.ui.screens.rides.RidesScreen
+import org.pjstatecm.graceride.ui.screens.traffic.PlanTransportScreen
+import org.pjstatecm.graceride.ui.screens.traffic.TrafficHubScreen
 
 val LocalBottomBarClearance = compositionLocalOf { 0.dp }
 
@@ -145,6 +162,8 @@ fun GraceRideAppRoot(
     val biometricEnrollment by container.biometric.enrollment.collectAsStateWithLifecycle()
     val biometricAppUnlocked by container.biometric.appUnlocked.collectAsStateWithLifecycle()
     val pendingBiometricOptIn by container.biometric.pendingOptInUserId.collectAsStateWithLifecycle()
+    val isOnline by container.networkMonitor.isOnline.collectAsStateWithLifecycle()
+    val currentLang by container.langFlow.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -156,7 +175,10 @@ fun GraceRideAppRoot(
 
     LaunchedEffect(Unit) { container.auth.refresh() }
 
-    LaunchedEffect(authState, biometricEnrollment, biometricAppUnlocked) {
+    val syncKey = (authState as? AuthState.SignedIn)?.let {
+        Triple(it.me.id, it.me.termsAccepted, it.me.can("drive"))
+    }
+    LaunchedEffect(syncKey, biometricEnrollment?.userId, biometricAppUnlocked) {
         val signedIn = authState as? AuthState.SignedIn ?: run {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
@@ -173,7 +195,7 @@ fun GraceRideAppRoot(
             if (signedIn.me.can("drive")) {
                 val intent = android.content.Intent(
                     android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse("graceride://open/drive"),
+                    "graceride://open/drive".toUri(),
                     context,
                     org.pjstatecm.graceride.MainActivity::class.java,
                 )
@@ -189,7 +211,7 @@ fun GraceRideAppRoot(
                     androidx.core.content.pm.ShortcutManagerCompat.removeDynamicShortcuts(context, listOf("drive_hub"))
                 }
             }
-            runCatching {
+            runSuspendCatching {
                 val prefs = container.community.notificationPrefs()
                 org.pjstatecm.graceride.notifications.RealtimeStreamClient.writeCachedPrefs(container.secureStore, prefs)
             }
@@ -206,11 +228,34 @@ fun GraceRideAppRoot(
         }
     }
 
-    val animatorsOn = remember { animatorsEnabled() }
+    LaunchedEffect(syncKey, isOnline, currentLang) {
+        val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
+        if (!signedIn.me.termsAccepted || !isOnline || !container.isLangPendingSync()) return@LaunchedEffect
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (signedIn.me.lang != currentLang) {
+                runSuspendCatching {
+                    container.community.updateProfile(
+                        org.pjstatecm.graceride.data.api.ProfileUpdateReq(lang = currentLang),
+                    )
+                    container.markLangPendingSync(false)
+                    container.auth.refresh()
+                }
+            } else {
+                container.markLangPendingSync(false)
+            }
+        }
+    }
+
+    val animatorsOn = animatorsEnabled()
     var splashMinElapsed by remember { mutableStateOf(container.launchSplashShown || !animatorsOn) }
-    var splashMounted by remember { mutableStateOf(!container.launchSplashShown || authState is AuthState.Loading) }
+    var splashMounted by remember {
+        mutableStateOf((!container.launchSplashShown && animatorsOn) || authState is AuthState.Loading)
+    }
 
     LaunchedEffect(Unit) {
+        if (!splashMounted && !container.launchSplashShown) {
+            container.launchSplashShown = true
+        }
         if (!splashMinElapsed) {
             delay(1350L)
             splashMinElapsed = true
@@ -226,8 +271,8 @@ fun GraceRideAppRoot(
             ) {
                 BiometricGateScreen(container, signedInMe)
             } else {
-            val sessionUserId = signedInMe?.id
-            androidx.compose.runtime.key(sessionUserId) {
+            val activeUserId = container.auth.userIdOf(authState)
+            androidx.compose.runtime.key(activeUserId) {
                 val navController = rememberNavController()
                 val backStack by navController.currentBackStackEntryAsState()
                 val currentRoute = backStack?.destination?.route
@@ -237,9 +282,17 @@ fun GraceRideAppRoot(
                     )
 
                 LaunchedEffect(authState, deepLink, currentRoute) {
+                    val rawLink = deepLink ?: return@LaunchedEffect
+                    val publicRoute = NotifLinkRouter.resolvePublic(rawLink)
+                    if (publicRoute != null && currentRoute != null) {
+                        navController.navigate(publicRoute) {
+                            launchSingleTop = true
+                        }
+                        pendingDeepLink?.value = null
+                        return@LaunchedEffect
+                    }
                     val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
                     if (!signedIn.me.termsAccepted) return@LaunchedEffect
-                    val rawLink = deepLink ?: return@LaunchedEffect
                     val onAuthRoute = currentRoute == null ||
                         Routes.authClasses.any { currentRoute == it || currentRoute.startsWith("$it/") }
                     if (onAuthRoute) {
@@ -247,8 +300,12 @@ fun GraceRideAppRoot(
                     }
                     when (val dest = NotifLinkRouter.resolveFor(rawLink, signedIn.me)) {
                         is NotifDestination.Native -> {
-                            navController.navigateRoute(dest.route) {
-                                launchSingleTop = true
+                            if (dest.route in Routes.tabs) {
+                                navController.navigateTab(dest.route)
+                            } else {
+                                navController.navigateRoute(dest.route) {
+                                    launchSingleTop = true
+                                }
                             }
                         }
                         is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
@@ -265,10 +322,11 @@ fun GraceRideAppRoot(
                     .map { it.destination.route }
                     .filterNotNull()
                     .first()
+                val onPublicRoute = Routes.publicClasses.any { matchesRouteClass(route, it) }
                 val target: AppRoute? = when (authState) {
-                    is AuthState.SignedOut -> AppRoute.Login
-                    is AuthState.Locked -> AppRoute.Unlock
-                    is AuthState.Pending -> AppRoute.Pending
+                    is AuthState.SignedOut -> if (onPublicRoute) null else AppRoute.Login
+                    is AuthState.Locked -> if (onPublicRoute) null else AppRoute.Unlock
+                    is AuthState.Pending -> if (onPublicRoute) null else AppRoute.Pending
                     is AuthState.SignedIn -> {
                         val signedIn = authState as AuthState.SignedIn
                         if (!signedIn.me.termsAccepted) {
@@ -300,9 +358,8 @@ fun GraceRideAppRoot(
                 }
             }
 
-            val isOnline by container.networkMonitor.isOnline.collectAsStateWithLifecycle()
             val isTabRoute = currentRoute != null && Routes.tabClasses.any {
-                currentRoute == it || currentRoute.startsWith("$it/")
+                matchesRouteClass(currentRoute, it)
             }
             val adaptiveInfo = currentWindowAdaptiveInfo()
             val calculatedSuiteType = NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(adaptiveInfo)
@@ -312,14 +369,17 @@ fun GraceRideAppRoot(
             } else {
                 calculatedSuiteType
             }
-            val isHomeSelected = currentRoute == AppRoute.Home::class.qualifiedName
-            val isEventsSelected = currentRoute == AppRoute.Events::class.qualifiedName
-            val isProfileSelected = currentRoute == AppRoute.Profile::class.qualifiedName
+            val isHomeSelected = matchesRouteClass(currentRoute, AppRoute.Home::class.qualifiedName)
+            val isEventsSelected = matchesRouteClass(currentRoute, AppRoute.Events::class.qualifiedName)
+            val isTrafficSelected = matchesRouteClass(currentRoute, AppRoute.TrafficHub::class.qualifiedName)
+            val isProfileSelected = matchesRouteClass(currentRoute, AppRoute.Profile::class.qualifiedName)
             val canEventsTab = (authState as? AuthState.SignedIn)?.me?.can("events") != false
-            val swipeTabs = remember(canEventsTab) {
+            val canTrafficTab = (authState as? AuthState.SignedIn)?.me?.let(Routes::canTrafficHub) == true
+            val swipeTabs = remember(canEventsTab, canTrafficTab) {
                 buildList<AppRoute> {
                     add(AppRoute.Home)
                     if (canEventsTab) add(AppRoute.Events)
+                    if (canTrafficTab) add(AppRoute.TrafficHub())
                     add(AppRoute.Profile)
                 }
             }
@@ -375,6 +435,23 @@ fun GraceRideAppRoot(
                             colors = navItemColors,
                         )
                     }
+                    if (canTrafficTab) {
+                        item(
+                            selected = isTrafficSelected,
+                            onClick = {
+                                UiHaptics.tick(view)
+                                navController.navigateTab(AppRoute.TrafficHub())
+                            },
+                            icon = {
+                                Icon(
+                                    if (isTrafficSelected) Icons.AutoMirrored.Filled.AltRoute else Icons.AutoMirrored.Outlined.AltRoute,
+                                    contentDescription = null,
+                                )
+                            },
+                            label = { Text(stringResource(R.string.nav_traffic)) },
+                            colors = navItemColors,
+                        )
+                    }
                     item(
                         selected = isProfileSelected,
                         onClick = {
@@ -396,7 +473,7 @@ fun GraceRideAppRoot(
                 },
             ) {
                 CompositionLocalProvider(
-                    LocalBottomBarClearance provides if (useFloatingBottomPill) 80.dp else 0.dp,
+                    LocalBottomBarClearance provides if (calculatedSuiteType == NavigationSuiteType.NavigationBar) 80.dp else 0.dp,
                 ) {
                     Scaffold { padding ->
                         Box(
@@ -433,11 +510,12 @@ fun GraceRideAppRoot(
                             }
                         }
                         val swipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
+                        val isTrafficHub = matchesRouteClass(currentRoute, AppRoute.TrafficHub::class.qualifiedName)
                         Box(
                             Modifier
                                 .weight(1f)
-                                .pointerInput(currentRoute, swipeTabs, isTabRoute, animatorsOn) {
-                                    if (!isTabRoute || !animatorsOn) return@pointerInput
+                                .pointerInput(currentRoute, swipeTabs, isTabRoute, isTrafficHub) {
+                                    if (!isTabRoute || isTrafficHub) return@pointerInput
                                     var totalDrag = 0f
                                     var switched = false
                                     detectHorizontalDragGestures(
@@ -449,7 +527,7 @@ fun GraceRideAppRoot(
                                             if (switched) return@detectHorizontalDragGestures
                                             totalDrag += dragAmount
                                             val idx = swipeTabs.indexOfFirst {
-                                                currentRoute == it::class.qualifiedName
+                                                matchesRouteClass(currentRoute, it::class.qualifiedName)
                                             }
                                             if (idx != -1 && abs(totalDrag) >= swipeThresholdPx) {
                                                 val targetIdx = if (totalDrag < 0f) idx + 1 else idx - 1
@@ -468,10 +546,14 @@ fun GraceRideAppRoot(
                                 startDestination = start,
                                 modifier = Modifier.fillMaxSize(),
                                 enterTransition = {
-                                    val fromIdx = tabOrderIndex(initialState.destination.route)
-                                    val toIdx = tabOrderIndex(targetState.destination.route)
+                                    val fromRoute = initialState.destination.route
+                                    val toRoute = targetState.destination.route
+                                    val fromIdx = tabOrderIndex(fromRoute)
+                                    val toIdx = tabOrderIndex(toRoute)
                                     val anim = animatorsEnabled()
                                     when {
+                                        isAuthRoute(fromRoute) || isAuthRoute(toRoute) ->
+                                            fadeIn(tween(if (anim) 180 else 80))
                                         fromIdx != -1 && toIdx != -1 && fromIdx != toIdx && anim -> {
                                             val dir = if (toIdx > fromIdx) 1 else -1
                                             slideInHorizontally(tween(260, easing = GraceRideSpringEasing)) { it * dir } +
@@ -484,10 +566,14 @@ fun GraceRideAppRoot(
                                     }
                                 },
                                 exitTransition = {
-                                    val fromIdx = tabOrderIndex(initialState.destination.route)
-                                    val toIdx = tabOrderIndex(targetState.destination.route)
+                                    val fromRoute = initialState.destination.route
+                                    val toRoute = targetState.destination.route
+                                    val fromIdx = tabOrderIndex(fromRoute)
+                                    val toIdx = tabOrderIndex(toRoute)
                                     val anim = animatorsEnabled()
                                     when {
+                                        isAuthRoute(fromRoute) || isAuthRoute(toRoute) ->
+                                            fadeOut(tween(if (anim) 150 else 80))
                                         fromIdx != -1 && toIdx != -1 && fromIdx != toIdx && anim -> {
                                             val dir = if (toIdx > fromIdx) -1 else 1
                                             slideOutHorizontally(tween(240, easing = GraceRideSpringEasing)) { (it / 3) * dir } +
@@ -500,10 +586,14 @@ fun GraceRideAppRoot(
                                     }
                                 },
                                 popEnterTransition = {
-                                    val fromIdx = tabOrderIndex(initialState.destination.route)
-                                    val toIdx = tabOrderIndex(targetState.destination.route)
+                                    val fromRoute = initialState.destination.route
+                                    val toRoute = targetState.destination.route
+                                    val fromIdx = tabOrderIndex(fromRoute)
+                                    val toIdx = tabOrderIndex(toRoute)
                                     val anim = animatorsEnabled()
                                     when {
+                                        isAuthRoute(fromRoute) || isAuthRoute(toRoute) ->
+                                            fadeIn(tween(if (anim) 180 else 80))
                                         fromIdx != -1 && toIdx != -1 && fromIdx != toIdx && anim -> {
                                             val dir = if (toIdx > fromIdx) 1 else -1
                                             slideInHorizontally(tween(260, easing = GraceRideSpringEasing)) { it * dir } +
@@ -516,10 +606,14 @@ fun GraceRideAppRoot(
                                     }
                                 },
                                 popExitTransition = {
-                                    val fromIdx = tabOrderIndex(initialState.destination.route)
-                                    val toIdx = tabOrderIndex(targetState.destination.route)
+                                    val fromRoute = initialState.destination.route
+                                    val toRoute = targetState.destination.route
+                                    val fromIdx = tabOrderIndex(fromRoute)
+                                    val toIdx = tabOrderIndex(toRoute)
                                     val anim = animatorsEnabled()
                                     when {
+                                        isAuthRoute(fromRoute) || isAuthRoute(toRoute) ->
+                                            fadeOut(tween(if (anim) 150 else 80))
                                         fromIdx != -1 && toIdx != -1 && fromIdx != toIdx && anim -> {
                                             val dir = if (toIdx > fromIdx) -1 else 1
                                             slideOutHorizontally(tween(240, easing = GraceRideSpringEasing)) { (it / 3) * dir } +
@@ -532,10 +626,77 @@ fun GraceRideAppRoot(
                                     }
                                 },
                             ) {
-                                composable<AppRoute.Login> { LoginScreen(container) }
+                                composable<AppRoute.Login> {
+                                    LoginScreen(
+                                        container = container,
+                                        onOpenTerms = { navController.navigate(AppRoute.TermsPublic) },
+                                        onOpenLicenses = { navController.navigate(AppRoute.Licenses) },
+                                    )
+                                }
                                 composable<AppRoute.Unlock> { UnlockScreen(container) }
                                 composable<AppRoute.Pending> { PendingScreen(container) }
                                 composable<AppRoute.Terms> { TermsScreen(container) }
+                                composable<AppRoute.TermsPublic> {
+                                    TermsScreen(
+                                        container = container,
+                                        readOnly = true,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenLicenses = { navController.navigate(AppRoute.Licenses) },
+                                    )
+                                }
+                                composable<AppRoute.Licenses> {
+                                    LicensesScreen(
+                                        container = container,
+                                        onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable<AppRoute.Invite> { entry ->
+                                    val args = entry.toRoute<AppRoute.Invite>()
+                                    InviteScreen(
+                                        container = container,
+                                        token = args.token,
+                                        onBackToLogin = {
+                                            navController.navigate(AppRoute.Login) {
+                                                popUpTo(0) { inclusive = true }
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onFinished = {
+                                            if (authState !is AuthState.SignedIn) {
+                                                navController.navigate(AppRoute.Login) {
+                                                    popUpTo(0) { inclusive = true }
+                                                    launchSingleTop = true
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                                composable<AppRoute.Visit> { entry ->
+                                    val args = entry.toRoute<AppRoute.Visit>()
+                                    VisitScreen(
+                                        container = container,
+                                        token = args.token,
+                                        onBack = {
+                                            if (!navController.popBackStack()) {
+                                                val fallback = if (authState is AuthState.SignedIn) AppRoute.Home else AppRoute.Login
+                                                navController.navigate(fallback) { launchSingleTop = true }
+                                            }
+                                        },
+                                    )
+                                }
+                                composable<AppRoute.CarePass> { entry ->
+                                    val args = entry.toRoute<AppRoute.CarePass>()
+                                    CarePassScreen(
+                                        container = container,
+                                        token = args.token,
+                                        onBack = {
+                                            if (!navController.popBackStack()) {
+                                                val fallback = if (authState is AuthState.SignedIn) AppRoute.Home else AppRoute.Login
+                                                navController.navigate(fallback) { launchSingleTop = true }
+                                            }
+                                        },
+                                    )
+                                }
                                 composable<AppRoute.Home> { HomeScreen(container, navController) }
                                 composable<AppRoute.Rides> { RidesScreen(container, navController) }
                                 composable<AppRoute.RideDetail> { entry ->
@@ -552,9 +713,27 @@ fun GraceRideAppRoot(
                                     RideNewScreen(container, navController, args.eventId, args.proxy)
                                 }
                                 composable<AppRoute.Events> { EventsScreen(container, navController) }
+                                composable<AppRoute.EventNew> { entry ->
+                                    val args = entry.toRoute<AppRoute.EventNew>()
+                                    EventFormScreen(
+                                        container = container,
+                                        nav = navController,
+                                        eventId = null,
+                                        duplicateId = args.duplicateId,
+                                    )
+                                }
+                                composable<AppRoute.EventEdit> { entry ->
+                                    val args = entry.toRoute<AppRoute.EventEdit>()
+                                    EventFormScreen(
+                                        container = container,
+                                        nav = navController,
+                                        eventId = args.id,
+                                        duplicateId = null,
+                                    )
+                                }
                                 composable<AppRoute.EventDetail> { entry ->
                                     val args = entry.toRoute<AppRoute.EventDetail>()
-                                    EventDetailScreen(container, navController, args.id, args.checkinCode)
+                                    EventDetailScreen(container, navController, args.id, args.checkinCode, args.openCheckin)
                                 }
                                 composable<AppRoute.Costs> { CostsScreen(container, navController) }
                                 composable<AppRoute.History> { HistoryScreen(container, navController) }
@@ -565,9 +744,32 @@ fun GraceRideAppRoot(
                                 composable<AppRoute.SecuritySettings> { SecuritySettingsScreen(container, navController) }
                                 composable<AppRoute.DriverSettings> { DriverSettingsScreen(container, navController) }
                                 composable<AppRoute.ProxyRiders> { ProxyRidersScreen(container, navController) }
+                                composable<AppRoute.Family> { FamilyScreen(container, navController) }
                                 composable<AppRoute.SavedAddresses> { SavedAddressesScreen(container, navController) }
                                 composable<AppRoute.Notifications> { NotificationsScreen(container, navController) }
                                 composable<AppRoute.DriveHub> { DriveHubScreen(container, navController) }
+                                composable<AppRoute.TrafficHub> { entry ->
+                                    val args = entry.toRoute<AppRoute.TrafficHub>()
+                                    TrafficHubScreen(
+                                        container = container,
+                                        nav = navController,
+                                        initialTab = args.tab,
+                                        initialRidesView = args.view,
+                                        initialAreaTab = args.areaTab,
+                                        initialRidesStatus = args.status,
+                                        initialRidesAttention = args.attention,
+                                        initialPlanFilter = args.planFilter,
+                                    )
+                                }
+                                composable<AppRoute.PlanTransport> { entry ->
+                                    val args = entry.toRoute<AppRoute.PlanTransport>()
+                                    PlanTransportScreen(
+                                        container = container,
+                                        nav = navController,
+                                        eventId = args.eventId,
+                                        initialDraftId = args.draftId,
+                                    )
+                                }
                                 composable<AppRoute.Studio> { entry ->
                                     val args = entry.toRoute<AppRoute.Studio>()
                                     GrokBotStudioScreen(
@@ -578,20 +780,47 @@ fun GraceRideAppRoot(
                                         initialFace = args.face,
                                     )
                                 }
+                                composable<AppRoute.AdminMembers> { entry ->
+                                    val args = entry.toRoute<AppRoute.AdminMembers>()
+                                    AdminMembersScreen(
+                                        container = container,
+                                        nav = navController,
+                                        initialTab = args.tab,
+                                        initialStatus = args.status,
+                                    )
+                                }
+                                composable<AppRoute.Announcements> { entry ->
+                                    val args = entry.toRoute<AppRoute.Announcements>()
+                                    AnnouncementsScreen(
+                                        container = container,
+                                        nav = navController,
+                                        manage = args.manage,
+                                    )
+                                }
                             }
                         }
                             }
                             AnimatedVisibility(
                                 visible = useFloatingBottomPill,
                                 modifier = Modifier.align(Alignment.BottomCenter),
-                                enter = slideInVertically(spring(dampingRatio = 0.82f, stiffness = 420f)) { it } + fadeIn(tween(180)),
-                                exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
+                                enter = if (animatorsEnabled()) {
+                                    slideInVertically(spring(dampingRatio = 0.82f, stiffness = 420f)) { it } + fadeIn(tween(180))
+                                } else {
+                                    fadeIn(tween(100))
+                                },
+                                exit = if (animatorsEnabled()) {
+                                    slideOutVertically(tween(160)) { it } + fadeOut(tween(140))
+                                } else {
+                                    fadeOut(tween(80))
+                                },
                             ) {
                                 FloatingGlassBottomBar(
                                     isHomeSelected = isHomeSelected,
                                     isEventsSelected = isEventsSelected,
+                                    isTrafficSelected = isTrafficSelected,
                                     isProfileSelected = isProfileSelected,
                                     canEvents = canEventsTab,
+                                    canTraffic = canTrafficTab,
                                     signedInMe = signedInMe,
                                     fileUrlProvider = container::fileUrl,
                                     onSelectTab = { route ->
@@ -655,6 +884,8 @@ fun GraceRideAppRoot(
                                                 optInError = res.message
                                             }
                                         }
+                                    } catch (ce: CancellationException) {
+                                        throw ce
                                     } catch (e: ApiException) {
                                         optInError = e.message
                                     } catch (e: Exception) {
@@ -700,10 +931,21 @@ fun GraceRideAppRoot(
     }
 }
 
-private fun tabOrderIndex(route: String?): Int = when (route) {
-    AppRoute.Home::class.qualifiedName -> 0
-    AppRoute.Events::class.qualifiedName -> 1
-    AppRoute.Profile::class.qualifiedName -> 2
+private fun matchesRouteClass(currentRoute: String?, qualifiedName: String?): Boolean {
+    if (currentRoute == null || qualifiedName == null) return false
+    return currentRoute == qualifiedName ||
+        currentRoute.startsWith("$qualifiedName/") ||
+        currentRoute.startsWith("$qualifiedName?")
+}
+
+private fun isAuthRoute(route: String?): Boolean =
+    route != null && Routes.authClasses.any { matchesRouteClass(route, it) }
+
+private fun tabOrderIndex(route: String?): Int = when {
+    matchesRouteClass(route, AppRoute.Home::class.qualifiedName) -> 0
+    matchesRouteClass(route, AppRoute.Events::class.qualifiedName) -> 1
+    matchesRouteClass(route, AppRoute.TrafficHub::class.qualifiedName) -> 2
+    matchesRouteClass(route, AppRoute.Profile::class.qualifiedName) -> 3
     else -> -1
 }
 
@@ -720,20 +962,37 @@ private data class FloatingNavTab(
 private fun FloatingGlassBottomBar(
     isHomeSelected: Boolean,
     isEventsSelected: Boolean,
+    isTrafficSelected: Boolean,
     isProfileSelected: Boolean,
     canEvents: Boolean,
+    canTraffic: Boolean,
     signedInMe: Me?,
     fileUrlProvider: (Long) -> String,
     onSelectTab: (AppRoute) -> Unit,
 ) {
     val homeLabel = stringResource(R.string.nav_home)
     val eventsLabel = stringResource(R.string.nav_events)
+    val trafficLabel = stringResource(R.string.nav_traffic)
     val profileLabel = stringResource(R.string.nav_profile)
-    val tabs = remember(isHomeSelected, isEventsSelected, isProfileSelected, canEvents, homeLabel, eventsLabel, profileLabel) {
+    val tabs = remember(
+        isHomeSelected,
+        isEventsSelected,
+        isTrafficSelected,
+        isProfileSelected,
+        canEvents,
+        canTraffic,
+        homeLabel,
+        eventsLabel,
+        trafficLabel,
+        profileLabel,
+    ) {
         buildList {
             add(FloatingNavTab(AppRoute.Home, homeLabel, isHomeSelected, Icons.Filled.Home, Icons.Outlined.Home))
             if (canEvents) {
                 add(FloatingNavTab(AppRoute.Events, eventsLabel, isEventsSelected, Icons.Filled.Event, Icons.Outlined.Event))
+            }
+            if (canTraffic) {
+                add(FloatingNavTab(AppRoute.TrafficHub(), trafficLabel, isTrafficSelected, Icons.AutoMirrored.Filled.AltRoute, Icons.AutoMirrored.Outlined.AltRoute))
             }
             add(FloatingNavTab(AppRoute.Profile, profileLabel, isProfileSelected, null, null, isProfile = true))
         }
@@ -774,91 +1033,97 @@ private fun FloatingGlassBottomBar(
             .padding(5.dp),
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            val animOn = animatorsEnabled()
             val slotWidth = maxWidth / tabs.size.coerceAtLeast(1)
-            val pillOffset by animateDpAsState(
-                targetValue = slotWidth * selectedIndex.coerceAtLeast(0),
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+            var lastSelectedIndex by remember { mutableIntStateOf(0) }
+            if (selectedIndex >= 0) {
+                lastSelectedIndex = selectedIndex
+            }
+            val effectiveIndex = (if (selectedIndex >= 0) selectedIndex else lastSelectedIndex)
+                .coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
+            val pillOffsetState = animateDpAsState(
+                targetValue = slotWidth * effectiveIndex,
+                animationSpec = if (animOn) spring(dampingRatio = 0.78f, stiffness = 420f) else snap(),
                 label = "floating_tab_pill_offset",
             )
-            val pillAlpha by animateFloatAsState(
+            val pillAlphaState = animateFloatAsState(
                 targetValue = if (selectedIndex >= 0) 1f else 0f,
-                animationSpec = tween(150),
+                animationSpec = if (animOn) tween(150) else snap(),
                 label = "floating_tab_pill_alpha",
             )
-            if (pillAlpha > 0f) {
-                Box(
-                    Modifier
-                        .offset { IntOffset(pillOffset.roundToPx(), 0) }
-                        .width(slotWidth)
-                        .fillMaxHeight()
-                        .graphicsLayer { alpha = pillAlpha }
-                        .clip(CircleShape)
-                        .background(pillFill, CircleShape)
-                        .border(0.5.dp, pillBorder, CircleShape),
-                )
-            }
+            Box(
+                Modifier
+                    .offset { IntOffset(pillOffsetState.value.roundToPx(), 0) }
+                    .width(slotWidth)
+                    .fillMaxHeight()
+                    .graphicsLayer { alpha = pillAlphaState.value }
+                    .clip(CircleShape)
+                    .background(pillFill, CircleShape)
+                    .border(0.5.dp, pillBorder, CircleShape),
+            )
             Row(Modifier.fillMaxSize()) {
                 tabs.forEach { item ->
-                    val scale by animateFloatAsState(
-                        targetValue = if (item.selected) 1.08f else 1f,
-                        animationSpec = spring(dampingRatio = 0.72f, stiffness = 450f),
-                        label = "floating_tab_scale",
-                    )
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(CircleShape)
-                            .selectable(
-                                selected = item.selected,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                role = Role.Tab,
-                                onClick = { onSelectTab(item.route) },
-                            )
-                            .semantics { contentDescription = item.label },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (item.isProfile) {
-                            Box(
-                                modifier = Modifier
-                                    .graphicsLayer {
-                                        scaleX = scale
-                                        scaleY = scale
-                                    }
-                                    .then(
-                                        if (item.selected) {
-                                            Modifier
-                                                .border(2.dp, activeInk, CircleShape)
-                                                .padding(2.dp)
-                                        } else {
-                                            Modifier
-                                        },
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                MemberAvatar(
-                                    name = signedInMe?.name ?: "",
-                                    photoUrl = signedInMe?.photoFileId?.let(fileUrlProvider),
-                                    avatarColor = signedInMe?.avatarColor,
-                                    avatarIcon = signedInMe?.avatarIcon,
-                                    size = 26.dp,
+                    androidx.compose.runtime.key(item.route) {
+                        val scaleState = animateFloatAsState(
+                            targetValue = if (item.selected) 1.08f else 1f,
+                            animationSpec = if (animOn) spring(dampingRatio = 0.72f, stiffness = 450f) else snap(),
+                            label = "floating_tab_scale",
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .selectable(
+                                    selected = item.selected,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Tab,
+                                    onClick = { onSelectTab(item.route) },
                                 )
-                            }
-                        } else {
-                            val icon = if (item.selected) item.filledIcon else item.outlinedIcon
-                            if (icon != null) {
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = null,
-                                    tint = if (item.selected) activeInk else inactiveInk,
+                                .semantics { contentDescription = item.label },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (item.isProfile) {
+                                Box(
                                     modifier = Modifier
-                                        .size(23.dp)
                                         .graphicsLayer {
-                                            scaleX = scale
-                                            scaleY = scale
-                                        },
-                                )
+                                            val s = scaleState.value
+                                            scaleX = s
+                                            scaleY = s
+                                        }
+                                        .border(
+                                            width = 2.dp,
+                                            color = if (item.selected) activeInk else Color.Transparent,
+                                            shape = CircleShape,
+                                        )
+                                        .padding(2.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    MemberAvatar(
+                                        name = signedInMe?.name ?: "",
+                                        photoUrl = signedInMe?.photoFileId?.let(fileUrlProvider),
+                                        avatarColor = signedInMe?.avatarColor,
+                                        avatarIcon = signedInMe?.avatarIcon,
+                                        size = 26.dp,
+                                    )
+                                }
+                            } else {
+                                val icon = if (item.selected) item.filledIcon else item.outlinedIcon
+                                if (icon != null) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = null,
+                                        tint = if (item.selected) activeInk else inactiveInk,
+                                        modifier = Modifier
+                                            .size(23.dp)
+                                            .graphicsLayer {
+                                                val s = scaleState.value
+                                                scaleX = s
+                                                scaleY = s
+                                            },
+                                    )
+                                }
                             }
                         }
                     }

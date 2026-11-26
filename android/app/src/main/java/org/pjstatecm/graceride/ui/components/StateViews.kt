@@ -111,7 +111,7 @@ fun InlineButtonSpinner(
 }
 
 @Composable
-fun ErrorView(message: String, onRetry: (() -> Unit)? = null, modifier: Modifier = Modifier) {
+fun ErrorView(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
     Column(
         modifier.fillMaxSize().padding(Spacing.md),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -252,14 +252,10 @@ fun CalloutBanner(
     containerColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
-    Surface(
-        color = containerColor,
-        contentColor = contentColor,
-        shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.25f)),
-        modifier = modifier.fillMaxWidth(),
-    ) {
+    val body: @Composable () -> Unit = {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -277,12 +273,45 @@ fun CalloutBanner(
                 color = contentColor,
                 modifier = Modifier.weight(1f),
             )
+            if (actionLabel != null && onAction != null) {
+                Surface(
+                    color = contentColor.copy(alpha = 0.14f),
+                    contentColor = contentColor,
+                    shape = CircleShape,
+                ) {
+                    Text(
+                        text = actionLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
         }
+    }
+    if (onAction != null) {
+        Surface(
+            onClick = onAction,
+            color = containerColor,
+            contentColor = contentColor,
+            shape = MaterialTheme.shapes.medium,
+            border = BorderStroke(1.dp, contentColor.copy(alpha = 0.25f)),
+            modifier = modifier.fillMaxWidth(),
+            content = body,
+        )
+    } else {
+        Surface(
+            color = containerColor,
+            contentColor = contentColor,
+            shape = MaterialTheme.shapes.medium,
+            border = BorderStroke(1.dp, contentColor.copy(alpha = 0.25f)),
+            modifier = modifier.fillMaxWidth(),
+            content = body,
+        )
     }
 }
 
 @Composable
-fun SkeletonLoadingList(count: Int = 3, modifier: Modifier = Modifier) {
+fun SkeletonLoadingList(modifier: Modifier = Modifier, @Suppress("UNUSED_PARAMETER") count: Int = 3) {
     GraceRideLoadingView(modifier = modifier, markSize = 68.dp, showLabel = true)
 }
 

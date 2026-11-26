@@ -1,10 +1,6 @@
 package org.pjstatecm.graceride.ui.components
 
 
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -377,11 +373,11 @@ fun AnimatedMemberAvatar(
 @Composable
 fun MemberAvatar(
     name: String,
+    modifier: Modifier = Modifier,
     photoUrl: String? = null,
     avatarColor: String? = null,
     avatarIcon: String? = null,
     size: Dp = 48.dp,
-    modifier: Modifier = Modifier,
 ) {
     val parsedColor = remember(avatarColor) { AvatarStyle.parseAvatarColor(avatarColor) }
     val grokBotSpec = remember(avatarIcon) { GrokBotSpec.parse(avatarIcon) }

@@ -2,13 +2,17 @@ package org.pjstatecm.graceride.data.repo
 
 import android.content.Context
 import android.os.Build
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.ApiProvider
 import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
+import org.pjstatecm.graceride.data.api.BackupCodesRespDto
 import org.pjstatecm.graceride.data.api.BiometricEnrollment
 import org.pjstatecm.graceride.data.api.BiometricFinishReq
 import org.pjstatecm.graceride.data.api.BiometricInfo
@@ -22,6 +26,9 @@ import org.pjstatecm.graceride.data.api.OkResponse
 import org.pjstatecm.graceride.data.api.PasskeyFinishReq
 import org.pjstatecm.graceride.data.api.PasskeyStart
 import org.pjstatecm.graceride.data.api.PasskeyStartReq
+import org.pjstatecm.graceride.data.api.TotpCodeReq
+import org.pjstatecm.graceride.data.api.TotpEnableRespDto
+import org.pjstatecm.graceride.data.api.TotpSetupDto
 import org.pjstatecm.graceride.data.api.TurnstileConfigDto
 import org.pjstatecm.graceride.data.api.UnlockReq
 import org.pjstatecm.graceride.data.api.apiCall
@@ -49,9 +56,17 @@ class AuthRepository(
     private val onCleared: (() -> Unit)? = null,
     private val biometric: BiometricAuthManager? = null,
     private val onLockedCallback: (() -> Unit)? = null,
+    private val onUserSwitched: ((Long) -> Unit)? = null,
 ) {
     private val api: ApiService get() = apiProvider.get()
     val state: StateFlow<AuthState> = _state.asStateFlow()
+
+    fun userIdOf(st: AuthState = _state.value): Long? = when (st) {
+        is AuthState.SignedIn -> st.me.id
+        is AuthState.Locked -> st.me?.id
+        is AuthState.Pending -> st.me.id
+        else -> null
+    }
 
     val me: Me?
         get() = when (val s = _state.value) {
@@ -78,22 +93,29 @@ class AuthRepository(
     }
 
     private fun isCachedIdleExpired(m: Me): Boolean {
-        if (m.autoLockMins <= 0) return false
+        val effectiveMins = when {
+            m.autoLockMins > 0 -> m.autoLockMins
+            m.autoLockMins == 0 -> m.sessionTimeoutMins
+            else -> 0
+        }
+        val hasUnlockMethod = m.passkeyCount > 0 || m.biometricCount > 0 || m.totpEnabled || m.devMode
+        if (effectiveMins <= 0 || m.status != "active" || !hasUnlockMethod) return false
         val savedAt = store?.getString(CACHED_ME_AT_KEY)?.toLongOrNull() ?: return true
-        val elapsedMins = (System.currentTimeMillis() - savedAt) / 60_000L
-        return elapsedMins >= m.autoLockMins
+        val elapsedMs = System.currentTimeMillis() - savedAt
+        if (elapsedMs < 0L) return true
+        return (elapsedMs / 60_000L) >= effectiveMins
     }
 
     @Synchronized
-    private fun clearLocalSessionIfNeeded() {
+    private fun clearLocalSessionIfNeeded(preserveVisitCookies: Boolean = true) {
         val hasLocal = _state.value !is AuthState.SignedOut ||
-            cookies.hasCookies() ||
+            (if (preserveVisitCookies) cookies.hasMemberCookies() else cookies.hasCookies()) ||
             store?.getString(CACHED_ME_KEY) != null ||
             store?.getString(HIDE_LOCK_DETAILS_KEY) != null ||
             store?.getString(NOTIF_PREFS_KEY) != null
         _state.value = AuthState.SignedOut
         if (!hasLocal) return
-        cookies.clear()
+        if (preserveVisitCookies) cookies.clearMemberCookies() else cookies.clear()
         store?.remove(CACHED_ME_KEY)
         store?.remove(CACHED_ME_AT_KEY)
         store?.remove(HIDE_LOCK_DETAILS_KEY)
@@ -107,22 +129,33 @@ class AuthRepository(
     suspend fun refresh(throwOnError: Boolean = false) {
         try {
             val m = apiCall(bus) { api.me() }
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            withContext(NonCancellable + Dispatchers.IO) {
+                val prevId = userIdOf() ?: loadCachedMe()?.id
+                if (prevId != null && prevId != m.id) {
+                    store?.remove(HIDE_LOCK_DETAILS_KEY)
+                    store?.remove(NOTIF_PREFS_KEY)
+                    store?.let { OfflineSnapshotStore.clear(it) }
+                    biometric?.clearStaleEnrollmentIfOtherUser(m.id)
+                    onUserSwitched?.invoke(prevId)
+                }
                 cacheMe(m)
                 biometric?.ensureLoaded()
             }
             _state.value = stateFor(m)
         } catch (e: ApiException) {
-            if (e.status == 401 || e.status == 403) {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { clearLocalSessionIfNeeded() }
+            if (e.status == 401) {
+                withContext(NonCancellable + Dispatchers.IO) { clearLocalSessionIfNeeded(preserveVisitCookies = true) }
                 if (throwOnError) throw e
             } else {
-                // Offline cold-start with valid session cookies: restore last verified profile
-                // so the member can still view cached today's rides until connectivity returns.
+                // Offline / transient error on cold-start: restore last verified profile when cookies
+                // exist, or purge any stale PII if session cookies are absent/expired.
                 if (_state.value is AuthState.Loading) {
-                    val (cached, expired) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val (cached, expired) = withContext(NonCancellable + Dispatchers.IO) {
                         biometric?.ensureLoaded()
-                        if (e.status == 0 && cookies.hasCookies()) {
+                        if (!cookies.hasMemberCookies()) {
+                            clearLocalSessionIfNeeded(preserveVisitCookies = true)
+                            null to false
+                        } else if (e.status == 0 || e.status >= 500 || e.status == 429) {
                             loadCachedMe()?.let { it to isCachedIdleExpired(it) } ?: (null to false)
                         } else {
                             null to false
@@ -140,11 +173,16 @@ class AuthRepository(
     }
 
     fun onUnauthorized() {
-        clearLocalSessionIfNeeded()
+        clearLocalSessionIfNeeded(preserveVisitCookies = true)
     }
 
+    @Synchronized
     fun onLocked() {
+        val current = _state.value
         val lockedMe = me?.copy(locked = true)
+        if (current is AuthState.Locked && (current.me != null || lockedMe == null)) {
+            return
+        }
         lockedMe?.let(::cacheMe)
         store?.let { OfflineSnapshotStore.clear(it) }
         onLockedCallback?.invoke()
@@ -180,11 +218,13 @@ class AuthRepository(
     suspend fun devLogin(email: String) {
         apiCall(bus) { api.devLogin(mapOf("email" to email)) }
         biometric?.markAppUnlocked()
-        refresh(throwOnError = true)
-        me?.let { m ->
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                biometric?.clearStaleEnrollmentIfOtherUser(m.id)
-                biometric?.offerOptInIfEligible(m.id)
+        withContext(NonCancellable) {
+            refresh(throwOnError = true)
+            me?.let { m ->
+                withContext(Dispatchers.IO) {
+                    biometric?.clearStaleEnrollmentIfOtherUser(m.id)
+                    biometric?.offerOptInIfEligible(m.id)
+                }
             }
         }
     }
@@ -198,15 +238,17 @@ class AuthRepository(
     suspend fun passkeyLoginFinish(challengeId: String, credentialJson: String) {
         apiCall(bus) {
             api.passkeyLoginFinish(
-                PasskeyFinishReq(challengeId, org.pjstatecm.graceride.data.api.apiJson.parseToJsonElement(credentialJson))
+                PasskeyFinishReq(challengeId, apiJson.parseToJsonElement(credentialJson))
             )
         }
         biometric?.markAppUnlocked()
-        refresh(throwOnError = true)
-        me?.let { m ->
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                biometric?.clearStaleEnrollmentIfOtherUser(m.id)
-                biometric?.offerOptInIfEligible(m.id)
+        withContext(NonCancellable) {
+            refresh(throwOnError = true)
+            me?.let { m ->
+                withContext(Dispatchers.IO) {
+                    biometric?.clearStaleEnrollmentIfOtherUser(m.id)
+                    biometric?.offerOptInIfEligible(m.id)
+                }
             }
         }
     }
@@ -217,7 +259,7 @@ class AuthRepository(
     suspend fun passkeyReauthFinish(challengeId: String, credentialJson: String) {
         apiCall(bus) {
             api.passkeyReauthFinish(
-                PasskeyFinishReq(challengeId, org.pjstatecm.graceride.data.api.apiJson.parseToJsonElement(credentialJson))
+                PasskeyFinishReq(challengeId, apiJson.parseToJsonElement(credentialJson))
             )
         }
         biometric?.markAppUnlocked()
@@ -226,10 +268,18 @@ class AuthRepository(
 
     suspend fun passkeyRegisterStart(): PasskeyStart = apiCall(bus) { api.passkeyRegisterStart() }
 
-    suspend fun passkeyRegisterFinish(challengeId: String, credentialJson: String) {
+    suspend fun passkeyRegisterFinish(
+        challengeId: String,
+        credentialJson: String,
+        label: String = defaultBiometricDeviceLabel(),
+    ) {
         apiCall(bus) {
             api.passkeyRegisterFinish(
-                PasskeyFinishReq(challengeId, org.pjstatecm.graceride.data.api.apiJson.parseToJsonElement(credentialJson))
+                PasskeyFinishReq(
+                    challenge_id = challengeId,
+                    credential = apiJson.parseToJsonElement(credentialJson),
+                    label = label.takeIf { it.isNotBlank() },
+                )
             )
         }
         refresh(throwOnError = true)
@@ -246,27 +296,33 @@ class AuthRepository(
         val currentMe = me ?: return BiometricSignResult.Error("Not signed in")
         val start = apiCall(bus) { api.biometricRegisterStart() }
         val payload = bio.buildSignedPayload("register", start.challenge)
-        return when (
-            val signed = bio.driver.generateAndSign(
-                context = context,
-                payload = payload,
-                title = title,
-                subtitle = subtitle,
-                cancelText = cancelText,
-                attestationChallenge = start.challenge.toByteArray(Charsets.UTF_8),
-            )
-        ) {
+        val signed = bio.driver.generateAndSign(
+            context = context,
+            payload = payload,
+            title = title,
+            subtitle = subtitle,
+            cancelText = cancelText,
+            attestationChallenge = start.challenge.toByteArray(Charsets.UTF_8),
+        )
+        return when (signed) {
             is BiometricSignResult.Success -> {
-                val res = apiCall(bus) {
-                    api.biometricRegisterFinish(
-                        BiometricRegisterFinishReq(
-                            challenge_id = start.challenge_id,
-                            public_key = signed.publicKeyB64Url,
-                            signature = signed.signatureB64Url,
-                            label = label,
-                            attestation_chain = signed.attestationChain,
+                val res = try {
+                    apiCall(bus) {
+                        api.biometricRegisterFinish(
+                            BiometricRegisterFinishReq(
+                                challenge_id = start.challenge_id,
+                                public_key = signed.publicKeyB64Url,
+                                signature = signed.signatureB64Url,
+                                label = label,
+                                attestation_chain = signed.attestationChain,
+                            )
                         )
-                    )
+                    }
+                } catch (t: Throwable) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        bio.clearEnrollmentLocal()
+                    }
+                    throw t
                 }
                 val enrollment = BiometricEnrollment(
                     id = res.id,
@@ -277,21 +333,35 @@ class AuthRepository(
                     label = res.label,
                     enrolledAtMs = System.currentTimeMillis(),
                 )
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                withContext(NonCancellable + Dispatchers.IO) {
                     bio.saveEnrollment(enrollment)
                 }
                 bio.markAppUnlocked()
                 refresh(throwOnError = true)
                 signed
             }
-            BiometricSignResult.Cancelled -> BiometricSignResult.Cancelled
+            BiometricSignResult.Cancelled -> {
+                if (bio.enrollment.value != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        bio.clearEnrollmentLocal()
+                    }
+                }
+                BiometricSignResult.Cancelled
+            }
             BiometricSignResult.KeyInvalidated -> {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                withContext(NonCancellable + Dispatchers.IO) {
                     bio.handleKeyInvalidated()
                 }
                 BiometricSignResult.KeyInvalidated
             }
-            is BiometricSignResult.Error -> signed
+            is BiometricSignResult.Error -> {
+                if (bio.enrollment.value != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        bio.clearEnrollmentLocal()
+                    }
+                }
+                signed
+            }
         }
     }
 
@@ -303,7 +373,7 @@ class AuthRepository(
         cancelText: String,
     ): BiometricSignResult {
         val bio = biometric ?: return BiometricSignResult.Error("Biometric manager unavailable")
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { bio.ensureLoaded() }
+        withContext(Dispatchers.IO) { bio.ensureLoaded() }
         val enrolled = bio.enrollment.value
             ?: return BiometricSignResult.Error("No biometric enrollment found on this device")
         val start = apiCall(bus) {
@@ -324,28 +394,30 @@ class AuthRepository(
                     )
                 }
                 bio.markAppUnlocked()
-                refresh(throwOnError = true)
-                val latest = me
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val finalEmail = latest?.email ?: enrolled.email
-                    if (finalEmail.isNotBlank()) {
-                        store?.putString("last_email", finalEmail)
-                    }
-                    if (latest != null) {
-                        bio.saveEnrollment(
-                            enrolled.copy(
-                                userId = latest.id,
-                                email = latest.email,
-                                userName = latest.name,
+                withContext(NonCancellable) {
+                    refresh(throwOnError = true)
+                    val latest = me
+                    withContext(Dispatchers.IO) {
+                        val finalEmail = latest?.email ?: enrolled.email
+                        if (finalEmail.isNotBlank()) {
+                            store?.putString("last_email", finalEmail)
+                        }
+                        if (latest != null) {
+                            bio.saveEnrollment(
+                                enrolled.copy(
+                                    userId = latest.id,
+                                    email = latest.email,
+                                    userName = latest.name,
+                                )
                             )
-                        )
+                        }
                     }
                 }
                 signed
             }
             BiometricSignResult.Cancelled -> BiometricSignResult.Cancelled
             BiometricSignResult.KeyInvalidated -> {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                withContext(NonCancellable + Dispatchers.IO) {
                     bio.handleKeyInvalidated()
                 }
                 BiometricSignResult.KeyInvalidated
@@ -361,7 +433,7 @@ class AuthRepository(
         cancelText: String,
     ): BiometricSignResult {
         val bio = biometric ?: return BiometricSignResult.Error("Biometric manager unavailable")
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { bio.ensureLoaded() }
+        withContext(Dispatchers.IO) { bio.ensureLoaded() }
         val enrolled = bio.enrollment.value
             ?: return BiometricSignResult.Error("No biometric enrollment found on this device")
         val start = apiCall(bus) {
@@ -387,7 +459,7 @@ class AuthRepository(
             }
             BiometricSignResult.Cancelled -> BiometricSignResult.Cancelled
             BiometricSignResult.KeyInvalidated -> {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                withContext(NonCancellable + Dispatchers.IO) {
                     bio.handleKeyInvalidated()
                 }
                 BiometricSignResult.KeyInvalidated
@@ -402,7 +474,7 @@ class AuthRepository(
         apiCall(bus) { api.deleteBiometric(id) }
         val enrolled = biometric?.enrollment?.value
         if (enrolled != null && enrolled.id == id) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            withContext(NonCancellable + Dispatchers.IO) {
                 biometric.clearEnrollmentLocal()
             }
         }
@@ -426,22 +498,59 @@ class AuthRepository(
     }
 
     suspend fun logout(mobileToken: String? = null) {
-        try {
-            apiCall(bus) {
-                api.logout(LogoutReq(mobile_token = mobileToken?.takeIf { it.isNotBlank() }))
+        withContext(NonCancellable + Dispatchers.IO) {
+            try {
+                apiCall(bus) {
+                    api.logout(LogoutReq(mobile_token = mobileToken?.takeIf { it.isNotBlank() }))
+                }
+            } catch (_: ApiException) {
+                // Even if the server call fails, drop the local credential.
+            } finally {
+                clearLocalSessionIfNeeded(preserveVisitCookies = false)
             }
-        } catch (_: ApiException) {
-            // Even if the server call fails, drop the local credential.
         }
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { clearLocalSessionIfNeeded() }
     }
 
     suspend fun logoutAll() {
-        try {
-            apiCall(bus) { api.logoutAll() }
-        } catch (_: ApiException) {
+        withContext(NonCancellable + Dispatchers.IO) {
+            try {
+                apiCall(bus) { api.logoutAll() }
+            } catch (_: ApiException) {
+            } finally {
+                clearLocalSessionIfNeeded(preserveVisitCookies = false)
+            }
         }
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { clearLocalSessionIfNeeded() }
+    }
+
+    suspend fun lockSession() {
+        val res = apiCall(bus) { api.lock() }
+        if (res.loggedOut) {
+            withContext(NonCancellable + Dispatchers.IO) {
+                clearLocalSessionIfNeeded(preserveVisitCookies = true)
+            }
+        } else {
+            onLocked()
+        }
+    }
+
+    suspend fun totpSetup(): TotpSetupDto = apiCall(bus) { api.totpSetup() }
+
+    suspend fun totpEnable(code: String): TotpEnableRespDto {
+        val res = apiCall(bus) { api.totpEnable(TotpCodeReq(code.trim())) }
+        refresh(throwOnError = false)
+        return res
+    }
+
+    suspend fun totpVerify(code: String): OkResponse {
+        val res = apiCall(bus) { api.totpVerify(TotpCodeReq(code.trim())) }
+        refresh(throwOnError = false)
+        return res
+    }
+
+    suspend fun regenerateBackupCodes(): BackupCodesRespDto {
+        val res = apiCall(bus) { api.regenerateBackupCodes() }
+        refresh(throwOnError = false)
+        return res
     }
 
     suspend fun acceptTerms() {

@@ -120,6 +120,8 @@ class UnlockViewModel(private val container: AppContainer) : ViewModel() {
                 }
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(error = e.message)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.biometric_failed))
             } finally {
@@ -170,6 +172,8 @@ class UnlockViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.reauth_failed))
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(error = e.message)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.reauth_failed))
             } finally {
@@ -202,15 +206,25 @@ class UnlockViewModel(private val container: AppContainer) : ViewModel() {
 @Composable
 fun UnlockScreen(container: AppContainer) {
     org.pjstatecm.graceride.ui.SecureScreenEffect()
-    val vm: UnlockViewModel = viewModel(factory = UnlockViewModel.factory(container))
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = when (val s = authState) {
+        is org.pjstatecm.graceride.data.repo.AuthState.Locked -> s.me
+        is org.pjstatecm.graceride.data.repo.AuthState.SignedIn -> s.me
+        is org.pjstatecm.graceride.data.repo.AuthState.Pending -> s.me
+        else -> container.auth.me
+    }
+    val vm: UnlockViewModel = viewModel(
+        key = "unlock-${me?.id ?: 0L}",
+        factory = UnlockViewModel.factory(container),
+    )
     val state by vm.state.collectAsStateWithLifecycle()
     val biometricEnrollment by vm.biometricEnrollment.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val view = LocalView.current
-    var code by remember { mutableStateOf("") }
-    val meId = container.auth.me?.id
+    var code by androidx.compose.runtime.saveable.rememberSaveable(me?.id) { mutableStateOf("") }
+    val meId = me?.id
     val showBiometricUnlock = biometricEnrollment != null && (meId == null || biometricEnrollment?.userId == meId)
-    val showPasskeyUnlock = container.auth.me == null || (container.auth.me?.passkeyCount ?: 0) > 0
+    val showPasskeyUnlock = me == null || me.passkeyCount > 0
 
     LaunchedEffect(showBiometricUnlock) {
         if (showBiometricUnlock) {
@@ -305,11 +319,7 @@ fun UnlockScreen(container: AppContainer) {
                     onValueChange = { code = it },
                     label = { Text(stringResource(if (state.useBackup) R.string.unlock_backup else R.string.unlock_code)) },
                     singleLine = true,
-                    visualTransformation = if (state.useBackup) {
-                        androidx.compose.ui.text.input.PasswordVisualTransformation()
-                    } else {
-                        androidx.compose.ui.text.input.VisualTransformation.None
-                    },
+                    visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = if (state.useBackup) KeyboardType.Password else KeyboardType.NumberPassword,
                         imeAction = ImeAction.Done,
@@ -334,10 +344,10 @@ fun UnlockScreen(container: AppContainer) {
                         Text(stringResource(R.string.unlock_submit))
                     }
                 }
-                TextButton(onClick = { vm.toggleBackup() }) {
+                TextButton(onClick = { code = ""; vm.toggleBackup() }) {
                     Text(stringResource(if (state.useBackup) R.string.unlock_code else R.string.unlock_backup))
                 }
-                if (BuildConfig.DEBUG) {
+                if (BuildConfig.DEBUG && me?.devMode == true) {
                     OutlinedButton(
                         onClick = { vm.devUnlock() },
                         enabled = !state.busy,

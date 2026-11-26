@@ -39,6 +39,11 @@ data class EventsUiState(
     val busyEventId: Long? = null,
     val message: String? = null,
     val actionNotice: EventActionNotice? = null,
+    val quickRsvpTarget: EventItem? = null,
+    val quickRsvpLoading: Boolean = false,
+    val quickRsvpBusy: Boolean = false,
+    val quickRsvpStep: String = "group",
+    val quickRsvpError: String? = null,
 )
 
 class EventsViewModel(private val container: AppContainer) : ViewModel() {
@@ -50,7 +55,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
         load(first = true)
         viewModelScope.launch {
             container.realtimeStream.events.collect { ev ->
-                if (ev != RealtimeEvent.Resume) refresh()
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) refresh()
             }
         }
         viewModelScope.launch {
@@ -83,6 +88,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun publishEvent(id: Long) {
         if (_state.value.busyEventId != null) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busyEventId = id, message = null, actionNotice = null)
         viewModelScope.launch {
             try {
@@ -99,6 +105,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun unpublishEvent(id: Long) {
         if (_state.value.busyEventId != null) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busyEventId = id, message = null, actionNotice = null)
         viewModelScope.launch {
             try {
@@ -124,6 +131,80 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
         _state.value = _state.value.copy(actionNotice = null)
     }
 
+    fun openQuickRsvp(event: EventItem) {
+        _state.value = _state.value.copy(
+            quickRsvpTarget = event,
+            quickRsvpLoading = true,
+            quickRsvpBusy = false,
+            quickRsvpStep = "group",
+            quickRsvpError = null,
+        )
+        viewModelScope.launch {
+            try {
+                val full = container.events.detail(event.id)
+                _state.value = _state.value.copy(quickRsvpTarget = full, quickRsvpLoading = false)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(quickRsvpLoading = false, quickRsvpError = e.message)
+            }
+        }
+    }
+
+    fun dismissQuickRsvp() {
+        _state.value = _state.value.copy(
+            quickRsvpTarget = null,
+            quickRsvpLoading = false,
+            quickRsvpBusy = false,
+            quickRsvpError = null,
+        )
+    }
+
+    fun confirmQuickRsvp(asGroupId: Long?, onWaitlistDone: (String) -> Unit, onJoinedNoTransport: () -> Unit) {
+        val target = _state.value.quickRsvpTarget ?: return
+        if (_state.value.quickRsvpBusy) return
+        _state.value = _state.value.copy(quickRsvpBusy = true, quickRsvpError = null)
+        viewModelScope.launch {
+            try {
+                val resp = container.events.signup(
+                    id = target.id,
+                    needRide = false,
+                    offerDrive = false,
+                    asGroupId = asGroupId,
+                )
+                reloadData(first = false)
+                if (resp.status == "waitlist") {
+                    _state.value = _state.value.copy(quickRsvpBusy = false, quickRsvpTarget = null)
+                    onWaitlistDone("waitlist")
+                } else {
+                    val canTransport = container.auth.me?.let { it.can("rides", "create") || it.can("drive", "create") } == true
+                    if (canTransport) {
+                        _state.value = _state.value.copy(quickRsvpBusy = false, quickRsvpStep = "transport")
+                        onJoinedNoTransport()
+                    } else {
+                        _state.value = _state.value.copy(quickRsvpBusy = false, quickRsvpTarget = null)
+                        onWaitlistDone("going")
+                    }
+                }
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(quickRsvpBusy = false, quickRsvpError = e.message)
+            }
+        }
+    }
+
+    fun quickRsvpSelfTransport() {
+        val target = _state.value.quickRsvpTarget ?: return
+        if (_state.value.quickRsvpBusy) return
+        _state.value = _state.value.copy(quickRsvpBusy = true, quickRsvpError = null)
+        viewModelScope.launch {
+            try {
+                container.events.setSelfTransport(target.id, true)
+                reloadData(first = false)
+                _state.value = _state.value.copy(quickRsvpBusy = false, quickRsvpTarget = null)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(quickRsvpBusy = false, quickRsvpError = e.message)
+            }
+        }
+    }
+
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
@@ -146,13 +227,13 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
             val cached = withContext(Dispatchers.IO) {
                 container.offlineCache.read(uid, cacheKey, ListSerializer(EventItem.serializer()))
             }
-            if (cached != null && _state.value.events.isEmpty()) {
+            if (cached != null && _state.value.events.isEmpty() && _state.value.tab == tab) {
                 _state.value = _state.value.copy(
                     loading = false,
                     refreshing = true,
                     events = cached.data,
                 )
-            } else {
+            } else if (_state.value.tab == tab) {
                 _state.value = _state.value.copy(loading = true, refreshing = false)
             }
         } else {
@@ -205,23 +286,27 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
             } else {
                 emptyList()
             }
-            _state.value = _state.value.copy(
-                loading = false,
-                refreshing = false,
-                events = events,
-                myRides = myRides,
-                myDrives = myDrives,
-                requestsByEvent = requestsByEvent,
-                draftCount = draftCount,
-                error = null,
-                offline = false,
-            )
+            if (_state.value.tab == tab) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = false,
+                    events = events,
+                    myRides = myRides,
+                    myDrives = myDrives,
+                    requestsByEvent = requestsByEvent,
+                    draftCount = draftCount,
+                    error = null,
+                    offline = false,
+                )
+            }
         } catch (e: ApiException) {
-            _state.value = _state.value.copy(
-                loading = false, refreshing = false,
-                error = if (e.status == 0) null else e.message,
-                offline = e.status == 0,
-            )
+            if (_state.value.tab == tab) {
+                _state.value = _state.value.copy(
+                    loading = false, refreshing = false,
+                    error = if (e.status == 0) null else e.message,
+                    offline = e.status == 0,
+                )
+            }
         }
     }
 

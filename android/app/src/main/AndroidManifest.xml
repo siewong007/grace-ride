@@ -21,6 +21,11 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
             <data android:scheme="waze" />
         </intent>
         <intent>
@@ -65,6 +70,12 @@
                 <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/costs" />
                 <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/notifications" />
                 <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/drive" />
+                <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/admin/traffic" />
+                <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/admin/rides" />
+                <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/admin/events" />
+                <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/admin/live" />
+                <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/admin/members" />
+                <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/admin/announcements" />
                 <data android:scheme="https" android:host="graceride.saliminn.my" android:pathPrefix="/history" />
                 <data android:scheme="https" android:host="graceride.saliminn.my" android:path="/me" />
                 <data android:scheme="https" android:host="graceride.saliminn.my" android:path="/profile" />
@@ -98,5 +109,15 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/grace_ride_widget_info" />
         </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

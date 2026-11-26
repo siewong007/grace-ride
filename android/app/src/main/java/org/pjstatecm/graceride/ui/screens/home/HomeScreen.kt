@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,7 +24,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
+import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Call
+import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Navigation
@@ -59,6 +63,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +76,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Ride
+import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
@@ -109,7 +116,8 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
     val vm: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
-    val unreadCount = (authState as? AuthState.SignedIn)?.me?.unread ?: state.me?.unread ?: 0
+    val me = (authState as? AuthState.SignedIn)?.me ?: state.me
+    val unreadCount = me?.unread ?: 0
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumedOnce by remember { mutableStateOf(false) }
     var expandedAnnIds by remember { mutableStateOf(emptySet<Long>()) }
@@ -153,7 +161,6 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                         contentPadding = PaddingValues(top = Spacing.sm, bottom = Spacing.sm + bottomClearance),
                     ) {
                         item {
-                            val me = state.me
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -174,7 +181,17 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                                     ) {
-                                        IconButton(onClick = { nav.navigate(AppRoute.Notifications) }) {
+                                        val unreadState = if (unreadCount > 0) {
+                                            stringResource(R.string.notif_a11y_unread_count, unreadCount)
+                                        } else {
+                                            null
+                                        }
+                                        IconButton(
+                                            onClick = { nav.navigate(AppRoute.Notifications) },
+                                            modifier = Modifier.semantics {
+                                                if (unreadState != null) stateDescription = unreadState
+                                            },
+                                        ) {
                                             BadgedBox(
                                                 badge = {
                                                     if (unreadCount > 0) {
@@ -218,8 +235,8 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
 
-                        val me = state.me
-                        val canShowQuick = me?.can("rides") == true || me?.can("costs") == true || me?.can("drive") == true
+                        val canTraffic = me != null && Routes.canTrafficHub(me)
+                        val canShowQuick = me?.can("rides") == true || me?.can("costs") == true || me?.can("drive") == true || canTraffic
                         if (canShowQuick) {
                             item {
                                 val quickActions = buildList {
@@ -248,6 +265,22 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                                 label = stringResource(R.string.shortcut_drive_short),
                                                 icon = Icons.Outlined.Navigation,
                                                 onClick = { nav.navigate(AppRoute.DriveHub) },
+                                            ),
+                                        )
+                                    }
+                                    if (canTraffic && size < 4) {
+                                        val s = state.trafficStats
+                                        val trafficCount = if (s != null) {
+                                            (s.pendingApproval + s.pendingPlanDrafts + s.pendingRideDrafts).toInt().coerceAtLeast(0)
+                                        } else {
+                                            0
+                                        }
+                                        add(
+                                            QuickActionItem(
+                                                label = stringResource(R.string.home_quick_traffic),
+                                                icon = Icons.AutoMirrored.Outlined.AltRoute,
+                                                badgeCount = trafficCount,
+                                                onClick = { nav.navigateTab(AppRoute.TrafficHub()) },
                                             ),
                                         )
                                     }
@@ -287,6 +320,239 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
 
+                        if (canTraffic) {
+                            item {
+                                val stats = state.trafficStats
+                                val statusColors = LocalStatusColors.current
+                                OutlinedCard(
+                                    onClick = { nav.navigateTab(AppRoute.TrafficHub()) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                ) {
+                                    Column(
+                                        Modifier.padding(Spacing.sm),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Outlined.AltRoute,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                            Text(
+                                                stringResource(R.string.home_traffic_card_title),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                            Icon(
+                                                Icons.Outlined.TouchApp,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                        if (stats != null) {
+                                            val pendingDrafts = stats.pendingPlanDrafts + stats.pendingRideDrafts
+                                            val returnedDrafts = stats.myReturnedPlanDrafts + stats.myReturnedRideDrafts
+                                            if (stats.pendingApproval > 0 || stats.noDriver > 0 || pendingDrafts > 0 || returnedDrafts > 0) {
+                                                FlowRow(
+                                                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                                    verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                                                ) {
+                                                    if (stats.pendingApproval > 0) {
+                                                        Surface(
+                                                            onClick = {
+                                                                nav.navigate(AppRoute.TrafficHub(tab = "rides", status = "pending_approval"))
+                                                            },
+                                                            shape = CircleShape,
+                                                            color = statusColors.warningSoft,
+                                                            contentColor = statusColors.warning,
+                                                        ) {
+                                                            Text(
+                                                                stringResource(R.string.home_traffic_pending_approval, stats.pendingApproval),
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                    if (stats.noDriver > 0) {
+                                                        Surface(
+                                                            onClick = {
+                                                                nav.navigate(AppRoute.TrafficHub(tab = "rides", status = "pending_driver"))
+                                                            },
+                                                            shape = CircleShape,
+                                                            color = MaterialTheme.colorScheme.secondaryContainer,
+                                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                        ) {
+                                                            Text(
+                                                                stringResource(R.string.home_traffic_no_driver, stats.noDriver),
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                    if (pendingDrafts > 0 && me.canApprovePlan()) {
+                                                        Surface(
+                                                            onClick = {
+                                                                if (stats.pendingPlanDrafts > 0) {
+                                                                    nav.navigate(AppRoute.TrafficHub(tab = "plans", planFilter = "pending"))
+                                                                } else {
+                                                                    nav.navigate(AppRoute.TrafficHub(tab = "rides", view = "drafts"))
+                                                                }
+                                                            },
+                                                            shape = CircleShape,
+                                                            color = statusColors.warningSoft,
+                                                            contentColor = statusColors.warning,
+                                                        ) {
+                                                            Text(
+                                                                stringResource(R.string.home_traffic_drafts_pending, pendingDrafts),
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                    if (returnedDrafts > 0) {
+                                                        Surface(
+                                                            onClick = {
+                                                                if (stats.myReturnedPlanDrafts > 0) {
+                                                                    nav.navigate(AppRoute.TrafficHub(tab = "plans", planFilter = "returned"))
+                                                                } else {
+                                                                    nav.navigate(AppRoute.TrafficHub(tab = "rides", view = "drafts"))
+                                                                }
+                                                            },
+                                                            shape = CircleShape,
+                                                            color = statusColors.warningSoft,
+                                                            contentColor = statusColors.warning,
+                                                        ) {
+                                                            Text(
+                                                                stringResource(R.string.home_traffic_drafts_returned, returnedDrafts),
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        val canAdminMembers = me != null && Routes.canAdminMembers(me)
+                        val canManageAnn = me != null && Routes.canManageAnnouncements(me)
+                        if (canAdminMembers || canManageAnn) {
+                            item {
+                                val stats = state.trafficStats
+                                val statusColors = LocalStatusColors.current
+                                OutlinedCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                ) {
+                                    Column(
+                                        Modifier.padding(Spacing.sm),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.AdminPanelSettings,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                            Text(
+                                                stringResource(R.string.home_admin_card_title),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                        }
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                            verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                                        ) {
+                                            if (canAdminMembers) {
+                                                Surface(
+                                                    onClick = { nav.navigate(AppRoute.AdminMembers()) },
+                                                    shape = CircleShape,
+                                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                ) {
+                                                    Text(
+                                                        stringResource(R.string.home_admin_members_btn),
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                                    )
+                                                }
+                                                if (stats != null && stats.pendingMembers > 0) {
+                                                    Surface(
+                                                        onClick = {
+                                                            nav.navigate(AppRoute.AdminMembers(tab = "members", status = "pending"))
+                                                        },
+                                                        shape = CircleShape,
+                                                        color = statusColors.warningSoft,
+                                                        contentColor = statusColors.warning,
+                                                    ) {
+                                                        Text(
+                                                            stringResource(R.string.home_admin_pending_members, stats.pendingMembers),
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                        )
+                                                    }
+                                                }
+                                                if (stats != null && stats.pendingRecovery > 0 && me?.can("admin_recovery") == true) {
+                                                    Surface(
+                                                        onClick = { nav.navigate(AppRoute.AdminMembers(tab = "recovery")) },
+                                                        shape = CircleShape,
+                                                        color = statusColors.warningSoft,
+                                                        contentColor = statusColors.warning,
+                                                    ) {
+                                                        Text(
+                                                            stringResource(R.string.home_admin_pending_recovery, stats.pendingRecovery),
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            if (canManageAnn) {
+                                                Surface(
+                                                    onClick = { nav.navigate(AppRoute.Announcements(manage = true)) },
+                                                    shape = CircleShape,
+                                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Outlined.Campaign,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(16.dp),
+                                                        )
+                                                        Text(
+                                                            stringResource(R.string.home_admin_announcements_btn),
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         state.nextRide?.let { ride ->
                             item { SectionHeader(stringResource(R.string.home_next_ride)) }
                             item {
@@ -316,7 +582,7 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
 
-                        if (state.me?.can("drive") == true && (state.drivingToday.isNotEmpty() || state.nextUpcomingDrive != null)) {
+                        if (me?.can("drive") == true && (state.drivingToday.isNotEmpty() || state.nextUpcomingDrive != null)) {
                             item { SectionHeader(stringResource(R.string.home_today_driving)) }
                             if (state.drivingToday.isNotEmpty()) {
                                 items(state.drivingToday, key = { "drive-${it.id}" }) { ride ->
@@ -406,7 +672,12 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                         }
 
                         if (state.announcements.isNotEmpty()) {
-                            item { SectionHeader(stringResource(R.string.home_announcements)) }
+                            item {
+                                SectionHeader(
+                                    title = stringResource(R.string.home_announcements),
+                                    actionText = stringResource(R.string.home_view_all),
+                                ) { nav.navigate(AppRoute.Announcements(manage = me?.can("admin_announcements") == true)) }
+                            }
                             items(state.announcements, key = { "ann-${it.id}" }) { ann ->
                                 val expanded = ann.id in expandedAnnIds
                                 val isLong = ann.body.length > 140 || ann.body.count { it == '\n' } >= 3
@@ -462,7 +733,10 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
 
-                        if (state.nextRide == null &&
+                        if (!canTraffic &&
+                            !canAdminMembers &&
+                            !canManageAnn &&
+                            state.nextRide == null &&
                             state.unpaidShares.isEmpty() &&
                             state.drivingToday.isEmpty() &&
                             state.nextUpcomingDrive == null &&
@@ -473,8 +747,8 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                 EmptyView(
                                     text = stringResource(R.string.home_no_ride),
                                     icon = Icons.Outlined.DirectionsCar,
-                                    actionLabel = stringResource(R.string.ride_new_browse_events),
-                                    onAction = { nav.navigateTab(AppRoute.Events) },
+                                    actionLabel = if (me?.can("events", "view") == true) stringResource(R.string.ride_new_browse_events) else null,
+                                    onAction = if (me?.can("events", "view") == true) { { nav.navigateTab(AppRoute.Events) } } else null,
                                 )
                             }
                         }

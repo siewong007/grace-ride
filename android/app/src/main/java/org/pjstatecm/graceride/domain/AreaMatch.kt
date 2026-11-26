@@ -16,12 +16,7 @@ fun inferAreaId(address: String, areas: List<Area>): Long? {
         if (!area.active) continue
         val normName = normalizeSpacesLower(area.name)
         if (normName.length < 2 || normName.length <= bestLen) continue
-        val matched = if (isAsciiAreaName(normName)) {
-            containsAsciiWord(normAddr, normName)
-        } else {
-            normAddr.contains(normName)
-        }
-        if (matched) {
+        if (containsBounded(normAddr, normName)) {
             bestId = area.id
             bestLen = normName.length
         }
@@ -49,25 +44,18 @@ private fun normalizeSpacesLower(input: String): String {
     }
 }
 
-private fun isAsciiAreaName(norm: String): Boolean {
-    for (i in norm.indices) {
-        val ch = norm[i]
-        val valid = (ch in 'a'..'z') || (ch in '0'..'9') || ch == ' ' || ch == '-'
-        if (!valid) return false
-    }
-    return true
-}
-
 private fun isAsciiAlphaNum(ch: Char): Boolean = (ch in 'a'..'z') || (ch in '0'..'9')
 
-private fun containsAsciiWord(haystack: String, needle: String): Boolean {
+private fun containsBounded(haystack: String, needle: String): Boolean {
+    val checkStart = isAsciiAlphaNum(needle.first())
+    val checkEnd = isAsciiAlphaNum(needle.last())
     var start = 0
     while (start <= haystack.length - needle.length) {
         val idx = haystack.indexOf(needle, start)
         if (idx < 0) return false
-        val beforeOk = idx == 0 || !isAsciiAlphaNum(haystack[idx - 1])
+        val beforeOk = !checkStart || idx == 0 || !isAsciiAlphaNum(haystack[idx - 1])
         val afterIdx = idx + needle.length
-        val afterOk = afterIdx == haystack.length || !isAsciiAlphaNum(haystack[afterIdx])
+        val afterOk = !checkEnd || afterIdx == haystack.length || !isAsciiAlphaNum(haystack[afterIdx])
         if (beforeOk && afterOk) return true
         start = idx + 1
     }

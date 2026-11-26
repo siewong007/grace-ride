@@ -2,12 +2,15 @@ package org.pjstatecm.graceride.ui.screens.events
 
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -24,17 +27,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -73,6 +82,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -80,6 +90,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -88,41 +99,39 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
-import org.pjstatecm.graceride.data.api.EventItem
-import org.pjstatecm.graceride.data.api.MySignup
-import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
-import org.pjstatecm.graceride.domain.RideStatus
+import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.EventIcon
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.ScheduleTimeline
+import org.pjstatecm.graceride.ui.components.SectionHeader
 import org.pjstatecm.graceride.ui.components.StatusPill
-import org.pjstatecm.graceride.ui.components.TimelineBadge
-import org.pjstatecm.graceride.ui.components.TimelineKind
-import org.pjstatecm.graceride.ui.components.TimelineNode
-import org.pjstatecm.graceride.ui.components.TimelineState
+import org.pjstatecm.graceride.ui.components.animatorsEnabled
 import org.pjstatecm.graceride.ui.copyToClipboard
 import org.pjstatecm.graceride.ui.openInMaps
 import org.pjstatecm.graceride.ui.openInWebApp
+import org.pjstatecm.graceride.ui.shareText
 import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
 import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 import org.pjstatecm.graceride.ui.theme.tabular
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EventDetailScreen(
     container: AppContainer,
     nav: NavHostController,
     id: Long,
     checkinCode: String? = null,
+    openCheckin: Boolean = false,
 ) {
     val vm: EventDetailViewModel = viewModel(
         key = "event-$id",
@@ -143,14 +152,20 @@ fun EventDetailScreen(
     var showPassQr by remember { mutableStateOf(false) }
     var checkinOrganiserMode by remember { mutableStateOf<Boolean?>(null) }
     var prefillCheckinCode by remember { mutableStateOf("") }
-    var deepCheckinHandled by remember(id, checkinCode) { mutableStateOf(false) }
-    val checkinSuccessFmt = stringResource(R.string.event_checkin_success, "%s")
-    val checkinAlreadyFmt = stringResource(R.string.event_checkin_already, "%s")
-    val scanMemberSuccessFmt = stringResource(R.string.event_scan_member_success, "%s")
-    val scanMemberAlreadyFmt = stringResource(R.string.event_scan_member_already, "%s")
+    var deepCheckinHandled by remember(id, checkinCode, openCheckin) { mutableStateOf(false) }
     var confirmWithdraw by remember { mutableStateOf(false) }
     var confirmPublish by remember { mutableStateOf(false) }
     var confirmUnpublish by remember { mutableStateOf(false) }
+    var confirmFinish by remember { mutableStateOf(false) }
+    var confirmCancel by remember { mutableStateOf(false) }
+    var showVenueQr by remember { mutableStateOf(false) }
+    var walkInOpen by remember { mutableStateOf(false) }
+    var walkInQuery by remember { mutableStateOf("") }
+    var showDriveRequests by remember { mutableStateOf(false) }
+    val finishDoneMsg = stringResource(R.string.event_finished_done)
+    val cancelDoneMsg = stringResource(R.string.event_cancelled_done)
+    val qrResetDoneMsg = stringResource(R.string.event_venue_qr_reset_done)
+    val driveClaimedMsg = stringResource(R.string.drive_claimed_msg)
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumedOnce by remember { mutableStateOf(false) }
 
@@ -181,11 +196,10 @@ fun EventDetailScreen(
     LaunchedEffect(state.checkinResult, state.scanMemberResult) {
         state.checkinResult?.let { res ->
             val eventTitle = res.title.ifBlank { state.event?.title.orEmpty() }
-            val msg = if (res.alreadyAttended) {
-                checkinAlreadyFmt.format(eventTitle)
-            } else {
-                checkinSuccessFmt.format(eventTitle)
-            }
+            val msg = context.getString(
+                if (res.alreadyAttended) R.string.event_checkin_already else R.string.event_checkin_success,
+                eventTitle,
+            )
             snackbar.showSnackbar(msg)
             checkinOrganiserMode = null
             prefillCheckinCode = ""
@@ -193,23 +207,24 @@ fun EventDetailScreen(
         }
         state.scanMemberResult?.let { res ->
             val name = res.memberName.ifBlank { "#${res.userId}" }
-            val msg = if (res.alreadyAttended) {
-                scanMemberAlreadyFmt.format(name)
-            } else {
-                scanMemberSuccessFmt.format(name)
-            }
+            val msg = context.getString(
+                if (res.alreadyAttended) R.string.event_scan_member_already else R.string.event_scan_member_success,
+                name,
+            )
             snackbar.showSnackbar(msg)
             checkinOrganiserMode = null
             prefillCheckinCode = ""
             vm.clearCheckinResults()
         }
     }
-    LaunchedEffect(state.event?.id, checkinCode) {
+    LaunchedEffect(state.event?.id, checkinCode, openCheckin) {
         val ev = state.event ?: return@LaunchedEffect
-        if (!deepCheckinHandled && checkinCode != null) {
+        val startDt = KlTime.parse(ev.startsAt)
+        val endedByTime = startDt != null && KlTime.now().isAfter(startDt.plusHours(12))
+        if (!deepCheckinHandled && (checkinCode != null || openCheckin)) {
             deepCheckinHandled = true
-            if (ev.attendanceEnabled && ev.status == "published" && ev.mySignup?.attended != true) {
-                prefillCheckinCode = checkinCode.trim()
+            if (ev.attendanceEnabled && ev.status == "published" && ev.mySignup?.attended != true && !endedByTime) {
+                prefillCheckinCode = checkinCode?.trim().orEmpty()
                 checkinOrganiserMode = false
             }
         }
@@ -226,6 +241,26 @@ fun EventDetailScreen(
                 },
                 actions = {
                     state.event?.let { ev ->
+                        IconButton(
+                            onClick = {
+                                UiHaptics.tick(view)
+                                shareText(
+                                    context = context,
+                                    text = context.getString(
+                                        R.string.event_share_text,
+                                        ev.title,
+                                        KlTime.display(ev.startsAt),
+                                        ev.location,
+                                    ),
+                                    subject = ev.title,
+                                )
+                            },
+                        ) {
+                            Icon(
+                                Icons.Outlined.Share,
+                                contentDescription = stringResource(R.string.event_share_btn),
+                            )
+                        }
                         IconButton(
                             onClick = {
                                 UiHaptics.tick(view)
@@ -252,6 +287,8 @@ fun EventDetailScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
+        var lastEvent by remember { mutableStateOf(state.event) }
+        if (state.event != null) lastEvent = state.event
         val viewMode = when {
             state.loading -> "loading"
             state.event == null -> "error"
@@ -259,15 +296,15 @@ fun EventDetailScreen(
         }
         Crossfade(
             targetState = viewMode,
-            animationSpec = tween(200),
+            animationSpec = if (animatorsEnabled()) tween(200) else snap(),
             label = "event_detail_state",
             modifier = Modifier.padding(padding),
         ) { mode ->
             when (mode) {
                 "loading" -> DetailSkeleton()
-                "error" -> ErrorView(state.error ?: "", vm::load)
+                "error" -> ErrorView(state.error ?: "", onRetry = vm::load)
                 else -> {
-                    val event = state.event!!
+                    val event = state.event ?: lastEvent ?: return@Crossfade
                     // A withdrawn signup stays in the payload with status "cancelled";
                     // treat it as no signup so the member can sign up again.
                     val signup = event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }
@@ -286,7 +323,7 @@ fun EventDetailScreen(
                         event.myReturnRide != null ||
                         state.drivingForEvent.isNotEmpty() ||
                         signup?.selfTransport == true
-                    val canCreateRide = container.auth.me?.can("rides", "create") == true
+                    val canCreateRide = me?.can("rides", "create") == true
                     val timelineNodes = buildEventWorkflowNodes(
                         event = event,
                         signup = signup,
@@ -305,6 +342,18 @@ fun EventDetailScreen(
                             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
                             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
+                            event.photoFileId?.let { fid ->
+                                AsyncImage(
+                                    model = container.fileUrl(fid),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp)
+                                        .clip(MaterialTheme.shapes.medium),
+                                )
+                            }
+
                             // Hero Header
                             Row(
                                 verticalAlignment = Alignment.Top,
@@ -479,6 +528,32 @@ fun EventDetailScreen(
                                 }
                             }
 
+                            if (open && isGoing && signup?.selfTransport == true && myRide == null && event.myReturnRide == null && state.drivingForEvent.isEmpty()) {
+                                CalloutBanner(
+                                    icon = Icons.Outlined.CheckCircle,
+                                    text = stringResource(R.string.event_going_own_way_status),
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                                if (canCreateRide) {
+                                    OutlinedButton(
+                                        onClick = { UiHaptics.tick(view); vm.setTransport(false) },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(stringResource(R.string.event_change_transport))
+                                    }
+                                }
+                            }
+                            if (open && isGoing && !hasTransport) {
+                                OutlinedButton(
+                                    onClick = { UiHaptics.tick(view); vm.setTransport(true) },
+                                    enabled = !state.busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(stringResource(R.string.event_going_own_way))
+                                }
+                            }
                             if (open && isGoing && canCreateRide) {
                                 if (!hasTransport) {
                                     Button(
@@ -604,7 +679,7 @@ fun EventDetailScreen(
                                             color = MaterialTheme.colorScheme.primary,
                                         )
                                     }
-                                } else if (isPublished && container.auth.me?.status == "active" && !isEndedByTime) {
+                                } else if (isPublished && me?.status == "active" && !isEndedByTime) {
                                     Button(
                                         onClick = {
                                             UiHaptics.tick(view)
@@ -634,16 +709,334 @@ fun EventDetailScreen(
                                 }
                             }
 
-                            val canOpenEventWeb = event.canManage ||
-                                me?.can("admin_events") == true ||
-                                me?.can("events", "update") == true
-                            if (canOpenEventWeb) {
-                                OutlinedButton(
-                                    onClick = { openInWebApp(context, container.webUrl("events/${event.id}")) },
+                            if (me?.can("admin_plan") == true) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        UiHaptics.tick(view)
+                                        nav.navigate(AppRoute.PlanTransport(event.id))
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
-                                    Text(stringResource(R.string.event_open_web_full))
+                                    Icon(Icons.AutoMirrored.Outlined.AltRoute, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                    Text(stringResource(R.string.event_plan_transport))
+                                }
+                            }
+
+                            // Inline Drive Requests for Volunteer Drivers
+                            if (open && isGoing && me?.can("drive", "create") == true) {
+                                OutlinedCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                ) {
+                                    Column(
+                                        Modifier.padding(Spacing.sm),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                stringResource(R.string.event_drive_requests_title),
+                                                style = MaterialTheme.typography.titleSmall,
+                                            )
+                                            TextButton(
+                                                onClick = {
+                                                    showDriveRequests = !showDriveRequests
+                                                    if (showDriveRequests) vm.loadDriveRequests()
+                                                },
+                                            ) {
+                                                Text(
+                                                    stringResource(
+                                                        if (showDriveRequests) {
+                                                            R.string.event_offer_drive_hide
+                                                        } else {
+                                                            R.string.event_offer_drive_show
+                                                        },
+                                                    ),
+                                                )
+                                            }
+                                        }
+                                        if (showDriveRequests) {
+                                            if (state.driveRequestsLoading) {
+                                                InlineButtonSpinner()
+                                            } else if (state.driveRequests.isEmpty()) {
+                                                Text(
+                                                    stringResource(R.string.drive_requests_empty),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            } else {
+                                                state.driveRequests.forEach { reqRide ->
+                                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                                    Row(
+                                                        Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                    ) {
+                                                        Column(Modifier.weight(1f)) {
+                                                            Text(
+                                                                reqRide.proxy?.riderName?.takeIf { reqRide.isProxy && it.isNotBlank() }
+                                                                    ?: reqRide.passenger.name,
+                                                                style = MaterialTheme.typography.titleSmall,
+                                                            )
+                                                            Text(
+                                                                "${KlTime.displayTime(reqRide.pickupAt)} · ${reqRide.area.name} → ${reqRide.destination}",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            )
+                                                        }
+                                                        FilledTonalButton(
+                                                            onClick = { vm.claimDriveRequest(reqRide.id, driveClaimedMsg) },
+                                                            enabled = !state.busy,
+                                                        ) {
+                                                            Text(stringResource(R.string.drive_claim))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Visitor Passes Section
+                            if (open && (isGoing || event.canManage) && canCreateRide) {
+                                VisitorInvitesSection(
+                                    eventTitle = event.title,
+                                    eventStartsAt = event.startsAt,
+                                    visitors = state.visitors,
+                                    areas = state.areas,
+                                    busy = state.busy,
+                                    lastSharePair = state.visitorSharePair,
+                                    onCreateVisitor = vm::createVisitor,
+                                    onReissueVisitor = vm::reissueVisitor,
+                                    onRevokeVisitor = vm::revokeVisitor,
+                                    onOpenRide = { rid -> nav.navigate(AppRoute.RideDetail(rid)) },
+                                    onDismissSharePair = vm::dismissVisitorShare,
+                                    onCopiedToast = { scope.launch { snackbar.showSnackbar(copiedNotice) } },
+                                )
+                            }
+
+                            // Organiser Management Panel
+                            if (event.canManage) {
+                                val activeSignups = remember(state.signups) {
+                                    state.signups.filter { it.status != "cancelled" }
+                                }
+                                val attendedTotal = remember(activeSignups) {
+                                    activeSignups.count { it.attended == 1L }
+                                }
+                                OutlinedCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                ) {
+                                    Column(
+                                        Modifier.padding(Spacing.sm),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                stringResource(R.string.event_manage_title),
+                                                style = MaterialTheme.typography.titleMedium,
+                                            )
+                                            if (event.status != "draft" && event.attendanceEnabled) {
+                                                Text(
+                                                    stringResource(
+                                                        R.string.event_manage_attendance_count,
+                                                        attendedTotal,
+                                                        activeSignups.size,
+                                                    ),
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        }
+
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            if (isPublished || event.status == "draft") {
+                                                OutlinedButton(
+                                                    onClick = { nav.navigate(AppRoute.EventEdit(event.id)) },
+                                                ) {
+                                                    Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(Spacing.xxs))
+                                                    Text(stringResource(R.string.event_edit_btn))
+                                                }
+                                            }
+                                            if (me?.can("events", "create") == true) {
+                                                OutlinedButton(
+                                                    onClick = { nav.navigate(AppRoute.EventNew(duplicateId = event.id)) },
+                                                ) {
+                                                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(Spacing.xxs))
+                                                    Text(stringResource(R.string.event_duplicate_btn))
+                                                }
+                                            }
+                                            if (event.status != "draft" && event.attendanceEnabled) {
+                                                OutlinedButton(onClick = { showVenueQr = true }) {
+                                                    Icon(Icons.Outlined.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(Spacing.xxs))
+                                                    Text(stringResource(R.string.event_venue_qr_btn))
+                                                }
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        walkInQuery = ""
+                                                        walkInOpen = true
+                                                        vm.searchWalkInMembers("")
+                                                    },
+                                                ) {
+                                                    Icon(Icons.Outlined.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(Spacing.xxs))
+                                                    Text(stringResource(R.string.event_walk_in_btn))
+                                                }
+                                            }
+                                        }
+
+                                        if (event.status != "draft") {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                            SectionHeader(
+                                                title = stringResource(R.string.event_signups_title),
+                                                count = activeSignups.size,
+                                            )
+                                            if (activeSignups.isEmpty()) {
+                                                Text(
+                                                    stringResource(R.string.event_signups_empty),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            } else {
+                                                activeSignups.forEachIndexed { idx, row ->
+                                                    if (idx > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                        Row(
+                                                            Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                        ) {
+                                                            Text(
+                                                                text = row.name + (row.asGroup?.let { " · $it" }.orEmpty()),
+                                                                style = MaterialTheme.typography.bodyMedium,
+                                                                modifier = Modifier.weight(1f),
+                                                            )
+                                                            if (row.status == "waitlist") {
+                                                                StatusPill(
+                                                                    stringResource(R.string.event_waitlist),
+                                                                    RideStatusKind.PENDING,
+                                                                )
+                                                            }
+                                                        }
+                                                        val roleSummary = listOfNotNull(
+                                                            if (row.needRide) stringResource(R.string.event_need_ride) else null,
+                                                            if (row.offerDrive) stringResource(R.string.event_signup_offers_seats, row.offerSeats.toInt()) else null,
+                                                            if (!row.needRide && !row.offerDrive && row.selfTransport) stringResource(R.string.event_going_own_way) else null,
+                                                        ).joinToString(" · ")
+                                                        if (roleSummary.isNotBlank()) {
+                                                            Text(
+                                                                roleSummary,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            )
+                                                        }
+                                                        if (event.attendanceEnabled) {
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                                                FilterChip(
+                                                                    selected = row.attended == 1L,
+                                                                    onClick = {
+                                                                        vm.markAttendance(row.userId, if (row.attended == 1L) null else true)
+                                                                    },
+                                                                    enabled = !state.busy,
+                                                                    label = { Text(stringResource(R.string.event_attending_chip)) },
+                                                                )
+                                                                FilterChip(
+                                                                    selected = row.attended == 0L,
+                                                                    onClick = {
+                                                                        vm.markAttendance(row.userId, if (row.attended == 0L) null else false)
+                                                                    },
+                                                                    enabled = !state.busy,
+                                                                    label = { Text(stringResource(R.string.event_absent_chip)) },
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (event.status == "published" || event.status == "finished") {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                            Text(
+                                                stringResource(R.string.event_after_title),
+                                                style = MaterialTheme.typography.titleSmall,
+                                            )
+                                            if (event.mileageClaimable &&
+                                                (event.canManage ||
+                                                    me?.can("admin_events", "update") == true ||
+                                                    me?.can("admin_plan", "update") == true ||
+                                                    me?.can("admin_rides", "update") == true)
+                                            ) {
+                                                FilledTonalButton(
+                                                    onClick = vm::openPostEventReimb,
+                                                    enabled = !state.busy,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Icon(Icons.Outlined.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                    Spacer(Modifier.width(Spacing.xs))
+                                                    Text(stringResource(R.string.event_post_reimb_btn))
+                                                }
+                                            }
+                                            val settleRef = event.settlement
+                                            if (settleRef != null) {
+                                                OutlinedButton(
+                                                    onClick = { openInWebApp(context, container.webUrl("settlements/${settleRef.id}")) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Text(stringResource(R.string.event_view_settlement))
+                                                }
+                                            } else if (me?.can("settlements", "create") == true) {
+                                                OutlinedButton(
+                                                    onClick = { openInWebApp(context, container.webUrl("events/${event.id}/settle")) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Text(stringResource(R.string.event_create_settlement))
+                                                }
+                                            }
+                                        }
+
+                                        if (isPublished || event.status == "draft") {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                            ) {
+                                                if (isPublished) {
+                                                    OutlinedButton(
+                                                        onClick = { confirmFinish = true },
+                                                        enabled = !state.busy,
+                                                    ) {
+                                                        Text(stringResource(R.string.event_finish_btn))
+                                                    }
+                                                }
+                                                if (event.canCancel) {
+                                                    TextButton(
+                                                        onClick = { confirmCancel = true },
+                                                        enabled = !state.busy,
+                                                        colors = ButtonDefaults.textButtonColors(
+                                                            contentColor = MaterialTheme.colorScheme.error,
+                                                        ),
+                                                    ) {
+                                                        Text(stringResource(R.string.event_cancel_btn))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -682,10 +1075,11 @@ fun EventDetailScreen(
         )
     }
     if (showSignup && event != null) {
-        val canOfferDrive = container.auth.me?.can("drive", "create") == true
+        val canOfferDrive = me?.can("drive", "create") == true
         var needRide by remember { mutableStateOf(false) }
         var offerDrive by remember { mutableStateOf(false) }
-        var offerSeats by remember { mutableStateOf(3) }
+        var selfTransport by remember { mutableStateOf(false) }
+        var offerSeats by remember { androidx.compose.runtime.mutableIntStateOf(3) }
         var groupId by remember { mutableStateOf(event.joinAs.firstOrNull()?.id) }
         var groupExpanded by remember { mutableStateOf(false) }
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -716,7 +1110,10 @@ fun EventDetailScreen(
                                     onValueChange = { checked ->
                                         UiHaptics.tick(view)
                                         needRide = checked
-                                        if (checked) offerDrive = false
+                                        if (checked) {
+                                            offerDrive = false
+                                            selfTransport = false
+                                        }
                                     },
                                 )
                                 .padding(horizontal = Spacing.sm),
@@ -746,7 +1143,10 @@ fun EventDetailScreen(
                                         onValueChange = { checked ->
                                             UiHaptics.tick(view)
                                             offerDrive = checked
-                                            if (checked) needRide = false
+                                            if (checked) {
+                                                needRide = false
+                                                selfTransport = false
+                                            }
                                         },
                                     )
                                     .padding(horizontal = Spacing.sm),
@@ -793,6 +1193,38 @@ fun EventDetailScreen(
                                 }
                             }
                         }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 52.dp)
+                                .toggleable(
+                                    value = selfTransport,
+                                    role = Role.Checkbox,
+                                    onValueChange = { checked ->
+                                        UiHaptics.tick(view)
+                                        selfTransport = checked
+                                        if (checked) {
+                                            needRide = false
+                                            offerDrive = false
+                                        }
+                                    },
+                                )
+                                .padding(horizontal = Spacing.sm),
+                        ) {
+                            Checkbox(checked = selfTransport, onCheckedChange = null)
+                            Icon(
+                                Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = Spacing.xs).size(20.dp),
+                            )
+                            Text(
+                                stringResource(R.string.event_going_own_way),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = Spacing.xs),
+                            )
+                        }
                     }
                 }
                 if (event.joinAs.size > 1) {
@@ -820,6 +1252,7 @@ fun EventDetailScreen(
                             offerDrive = offerDrive,
                             asGroupId = if (event.joinAs.size == 1) event.joinAs.first().id else groupId,
                             offerSeats = if (offerDrive) offerSeats else null,
+                            selfTransport = if (selfTransport) true else null,
                         )
                         showSignup = false
                     },
@@ -867,6 +1300,91 @@ fun EventDetailScreen(
                 TextButton(onClick = { vm.unpublish(); confirmUnpublish = false }) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = { TextButton(onClick = { confirmUnpublish = false }) { Text(stringResource(R.string.common_cancel)) } },
+        )
+    }
+
+    if (confirmFinish) {
+        AlertDialog(
+            onDismissRequest = { confirmFinish = false },
+            title = { Text(stringResource(R.string.event_finish_btn)) },
+            text = { Text(stringResource(R.string.event_finish_confirm)) },
+            confirmButton = {
+                TextButton(onClick = { vm.finishEvent(finishDoneMsg); confirmFinish = false }) {
+                    Text(stringResource(R.string.common_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmFinish = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    if (confirmCancel) {
+        AlertDialog(
+            onDismissRequest = { confirmCancel = false },
+            title = { Text(stringResource(R.string.event_cancel_btn)) },
+            text = { Text(stringResource(R.string.event_cancel_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.cancelEvent(cancelDoneMsg); confirmCancel = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text(stringResource(R.string.common_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCancel = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    if (showVenueQr && event != null) {
+        val qrPath = buildString {
+            append("/events/${event.id}/checkin")
+            event.checkinCode?.takeIf { it.isNotBlank() }?.let { append("?code=$it") }
+        }
+        VenueCheckinQrDialog(
+            event = event,
+            checkinUrl = container.webUrl(qrPath),
+            busy = state.busy,
+            onResetCode = { vm.resetCheckinCode(qrResetDoneMsg) },
+            onDismiss = { showVenueQr = false },
+            onCopied = { scope.launch { snackbar.showSnackbar(copiedNotice) } },
+        )
+    }
+
+    if (walkInOpen) {
+        WalkInCheckinDialog(
+            query = walkInQuery,
+            candidates = state.walkInCandidates,
+            busy = state.busy,
+            onQueryChange = { q ->
+                walkInQuery = q
+                vm.searchWalkInMembers(q)
+            },
+            onPickUser = { uid ->
+                vm.markAttendance(uid, true)
+                walkInOpen = false
+            },
+            onDismiss = { walkInOpen = false },
+        )
+    }
+
+    val postEventResp = state.postEventDrivers
+    if (state.postEventOpen && postEventResp != null) {
+        PostEventReimbSheet(
+            data = postEventResp,
+            busy = state.busy,
+            onSubmit = { req ->
+                vm.submitPostEventReimb(req) { count, cents ->
+                    context.getString(R.string.event_post_reimb_done, count, Money.rm(cents))
+                }
+            },
+            onDismiss = vm::closePostEventReimb,
         )
     }
 }

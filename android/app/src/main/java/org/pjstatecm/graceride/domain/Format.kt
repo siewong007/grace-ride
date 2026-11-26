@@ -15,11 +15,22 @@ import java.util.concurrent.ConcurrentHashMap
 object Money {
     fun rm(cents: Long): String {
         val neg = cents < 0
-        val abs = if (neg) -cents else cents
-        val ringgit = abs / 100
-        val sen = (abs % 100).toInt()
-        val grouped = String.format(Locale.US, "%,d", ringgit)
+        val abs: ULong = if (neg) (-(cents + 1L)).toULong() + 1uL else cents.toULong()
+        val ringgit = abs / 100uL
+        val sen = (abs % 100uL).toInt()
+        val grouped = formatGroupedUnsigned(ringgit)
         return (if (neg) "-" else "") + "RM " + grouped + "." + sen.toString().padStart(2, '0')
+    }
+
+    private fun formatGroupedUnsigned(value: ULong): String {
+        val raw = value.toString()
+        if (raw.length <= 3) return raw
+        return buildString(raw.length + (raw.length - 1) / 3) {
+            for (i in raw.indices) {
+                if (i > 0 && (raw.length - i) % 3 == 0) append(',')
+                append(raw[i])
+            }
+        }
     }
 }
 
@@ -32,6 +43,9 @@ object KlTime {
     private val time24 = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
     private val zhDisplay = DateTimeFormatter.ofPattern("M月d日 EEE HH:mm", Locale.CHINESE)
     private val localeFormatters = ConcurrentHashMap<Pair<String, Locale>, DateTimeFormatter>()
+    private val OFFSET_RE = Regex("^\\d{4}-\\d{2}-\\d{2}[Tt ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?([Zz]|[+-]\\d{2}:?\\d{2})$")
+    private val COMPACT_OFFSET_RE = Regex("([+-]\\d{2})(\\d{2})$")
+    private val FRACTIONAL_LOCAL_RE = Regex("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d+$")
 
     private fun localizedFormatter(
         pattern: String,
@@ -40,35 +54,50 @@ object KlTime {
         DateTimeFormatter.ofPattern(pattern, locale)
     }
 
+    /** Normalizes `'T'`/`'t'` to `' '` so KL text timestamps compare chronologically. */
+    fun sortKey(raw: String?): String = raw?.trim()?.replace('T', ' ')?.replace('t', ' ').orEmpty()
+
     fun parse(text: String): LocalDateTime? {
         val clean = text.trim()
         if (clean.isEmpty()) return null
-        if (clean.endsWith("Z") || clean.matches(Regex("^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?([+-]\\d{2}:?\\d{2})$"))) {
-            runCatching {
-                return java.time.OffsetDateTime.parse(clean.replace(' ', 'T'))
+        if (OFFSET_RE.matches(clean)) {
+            var iso = clean.replace(' ', 'T').replace('t', 'T')
+            if (iso.endsWith("z")) {
+                iso = iso.dropLast(1) + "Z"
+            } else {
+                iso = COMPACT_OFFSET_RE.replace(iso, "$1:$2")
+            }
+            return runCatching {
+                java.time.OffsetDateTime.parse(iso)
                     .atZoneSameInstant(zone)
                     .toLocalDateTime()
-            }
+            }.getOrNull()
         }
-        val t = clean.replace('T', ' ')
-        return runCatching { LocalDateTime.parse(t.take(19), full) }.getOrNull()
-            ?: runCatching { LocalDateTime.parse(t.take(16), minuteFmt) }.getOrNull()
-            ?: runCatching { LocalDate.parse(t.take(10), dateOnly).atStartOfDay() }.getOrNull()
+        val normalized = clean.replace('T', ' ').replace('t', ' ')
+        val localStr = if (FRACTIONAL_LOCAL_RE.matches(normalized)) {
+            normalized.substring(0, 19)
+        } else {
+            normalized
+        }
+        return when (localStr.length) {
+            19 -> runCatching { LocalDateTime.parse(localStr, full) }.getOrNull()
+            16 -> runCatching { LocalDateTime.parse(localStr, minuteFmt) }.getOrNull()
+            10 -> runCatching { LocalDate.parse(localStr, dateOnly).atStartOfDay() }.getOrNull()
+            else -> null
+        }
     }
 
     private fun isZh(locale: Locale = Locale.getDefault()): Boolean = locale.language == "zh"
 
     /** "Sat, 21 Nov · 09:30" (EN) / "11月21日 周六 · 09:30" (ZH). */
-    fun display(text: String): String {
+    fun display(text: String, locale: Locale = Locale.getDefault()): String {
         val dt = parse(text) ?: return text
-        val locale = Locale.getDefault()
         val pattern = if (isZh(locale)) "M月d日 EEE · HH:mm" else "EEE, d MMM · HH:mm"
         return dt.format(localizedFormatter(pattern, locale))
     }
 
-    fun displayDate(text: String): String {
+    fun displayDate(text: String, locale: Locale = Locale.getDefault()): String {
         val dt = parse(text) ?: return text
-        val locale = Locale.getDefault()
         val pattern = if (isZh(locale)) "M月d日 EEE" else "EEE, d MMM"
         return dt.format(localizedFormatter(pattern, locale))
     }
@@ -83,10 +112,26 @@ object KlTime {
         return dt.format(localizedFormatter("EEE"))
     }
 
-    fun dayMonthShort(text: String): String {
+    fun dayMonthShort(text: String, locale: Locale = Locale.getDefault()): String {
         val dt = parse(text) ?: return text
-        val locale = Locale.getDefault()
         val pattern = if (isZh(locale)) "M月d日" else "d MMM"
+        return dt.format(localizedFormatter(pattern, locale))
+    }
+
+    fun parseEpochMillis(text: String): Long? =
+        parse(text)?.atZone(zone)?.toInstant()?.toEpochMilli()
+
+    fun notificationDate(
+        text: String,
+        locale: Locale = Locale.getDefault(),
+        referenceYear: Int = LocalDate.now(zone).year,
+    ): String {
+        val dt = parse(text) ?: return text
+        val pattern = if (dt.year == referenceYear) {
+            if (isZh(locale)) "M月d日" else "d MMM"
+        } else {
+            if (isZh(locale)) "yyyy年M月d日" else "d MMM yyyy"
+        }
         return dt.format(localizedFormatter(pattern, locale))
     }
 

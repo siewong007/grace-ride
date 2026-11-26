@@ -4,6 +4,7 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -86,6 +87,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
@@ -105,6 +108,7 @@ import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.RideStatusPill
 import org.pjstatecm.graceride.ui.components.SectionHeader
+import org.pjstatecm.graceride.ui.components.animatorsEnabled
 import org.pjstatecm.graceride.ui.dialPhone
 import org.pjstatecm.graceride.ui.openInMaps
 import org.pjstatecm.graceride.ui.openInWebApp
@@ -126,12 +130,18 @@ fun RideDetailScreen(
         factory = RideDetailViewModel.factory(container, id),
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val context = LocalContext.current
     val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
     var confirmCancel by remember { mutableStateOf(false) }
+    var cancelReason by remember { mutableStateOf("") }
     var confirmWithdraw by remember { mutableStateOf(false) }
     var withdrawReason by remember { mutableStateOf("") }
+    var confirmDecline by remember { mutableStateOf(false) }
+    var confirmNoShow by remember { mutableStateOf(false) }
+    var unableNotes by remember { mutableStateOf("") }
     val staleMsg = stringResource(R.string.error_ride_changed)
     val bookedMsg = stringResource(R.string.ride_new_success)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -194,6 +204,8 @@ fun RideDetailScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
+        var lastRide by remember { mutableStateOf(state.ride) }
+        if (state.ride != null) lastRide = state.ride
         val viewMode = when {
             state.loading -> "loading"
             state.ride == null -> "error"
@@ -201,15 +213,15 @@ fun RideDetailScreen(
         }
         Crossfade(
             targetState = viewMode,
-            animationSpec = tween(200),
+            animationSpec = if (animatorsEnabled()) tween(200) else snap(),
             label = "ride_detail_state",
             modifier = Modifier.padding(padding),
         ) { mode ->
             when (mode) {
                 "loading" -> DetailSkeleton()
-                "error" -> ErrorView(state.error ?: "", vm::load)
+                "error" -> ErrorView(state.error ?: "", onRetry = vm::load)
                 else -> {
-                    val ride = state.ride!!
+                    val ride = state.ride ?: lastRide ?: return@Crossfade
                     val c = LocalStatusColors.current
                     PullToRefreshBox(
                         isRefreshing = state.refreshing,
@@ -572,7 +584,6 @@ fun RideDetailScreen(
                             }
 
                             // Passenger actions
-                            val me = container.auth.me
                             val canRidesUpdate = me?.can("rides", "update") == true
                             val canRidesDelete = me?.can("rides", "delete") == true
                             val canDriveUpdate = me?.can("drive", "update") == true
@@ -601,7 +612,7 @@ fun RideDetailScreen(
                                     OutlinedButton(
                                         onClick = {
                                             UiHaptics.tick(view)
-                                            vm.respond(false)
+                                            confirmDecline = true
                                         },
                                         enabled = !state.busy,
                                         modifier = Modifier.weight(1f).height(50.dp),
@@ -677,6 +688,64 @@ fun RideDetailScreen(
                                     }
                                 }
                             }
+                            if (ride.viewer.isPassenger &&
+                                canRidesUpdate &&
+                                ride.leg == "return" &&
+                                !RideStatus.isTerminal(ride.status)
+                            ) {
+                                OutlinedCard(Modifier.fillMaxWidth()) {
+                                    Column(
+                                        Modifier.padding(Spacing.sm),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Text(stringResource(R.string.ride_supper_title), style = MaterialTheme.typography.titleSmall)
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            listOf(
+                                                "supper" to R.string.ride_supper_join,
+                                                "direct_home" to R.string.ride_supper_direct,
+                                            ).forEach { (choice, labelRes) ->
+                                                val selected = ride.supperChoice == choice
+                                                val nextChoice = if (selected) "unspecified" else choice
+                                                if (selected) {
+                                                    Button(
+                                                        onClick = { UiHaptics.tick(view); vm.supperChoice(nextChoice) },
+                                                        enabled = !state.busy,
+                                                        colors = graceRidePrimaryButtonColors(),
+                                                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                                    ) {
+                                                        Text(stringResource(labelRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    }
+                                                } else {
+                                                    OutlinedButton(
+                                                        onClick = { UiHaptics.tick(view); vm.supperChoice(nextChoice) },
+                                                        enabled = !state.busy,
+                                                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                                    ) {
+                                                        Text(stringResource(labelRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (ride.viewer.isDriver &&
+                                ride.leg == "return" &&
+                                ride.supperChoice in setOf("supper", "direct_home")
+                            ) {
+                                CalloutBanner(
+                                    icon = Icons.Outlined.Schedule,
+                                    text = stringResource(
+                                        if (ride.supperChoice == "supper") R.string.ride_supper_driver_join
+                                        else R.string.ride_supper_driver_direct,
+                                    ),
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                            }
                             if (ride.viewer.isPassenger && canRidesDelete && RideStatus.cancellable(ride.status)) {
                                 OutlinedButton(
                                     onClick = { confirmCancel = true },
@@ -685,6 +754,27 @@ fun RideDetailScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     Text(stringResource(R.string.ride_cancel))
+                                }
+                            }
+                            if (ride.status == "pending_driver" &&
+                                !ride.viewer.isPassenger &&
+                                !ride.viewer.isDriver &&
+                                me?.can("drive", "create") == true
+                            ) {
+                                Button(
+                                    onClick = {
+                                        UiHaptics.confirm(view)
+                                        vm.claim()
+                                    },
+                                    enabled = !state.busy,
+                                    colors = graceRidePrimaryButtonColors(),
+                                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                                ) {
+                                    if (state.busy) {
+                                        InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                                    } else {
+                                        Text(stringResource(R.string.drive_claim))
+                                    }
                                 }
                             }
 
@@ -817,6 +907,25 @@ fun RideDetailScreen(
                                                             Spacer(Modifier.width(4.dp))
                                                             Text(stringResource(R.string.driver_delay_10m))
                                                         }
+                                                        val canMarkNoShow = ride.viewer.isStaff ||
+                                                            KlTime.parse(ride.pickupAt)?.let { !it.isAfter(KlTime.now()) } == true
+                                                        OutlinedButton(
+                                                            onClick = { UiHaptics.tick(view); confirmNoShow = true },
+                                                            enabled = !state.busy && canMarkNoShow,
+                                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                                        ) {
+                                                            Icon(Icons.Outlined.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                            Spacer(Modifier.width(4.dp))
+                                                            Text(stringResource(R.string.ride_status_no_show))
+                                                        }
+                                                        OutlinedButton(
+                                                            onClick = { UiHaptics.confirm(view); vm.complete() },
+                                                            enabled = !state.busy,
+                                                        ) {
+                                                            Icon(Icons.Outlined.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                            Spacer(Modifier.width(4.dp))
+                                                            Text(stringResource(R.string.driver_complete_trip))
+                                                        }
                                                     }
                                                 } else {
                                                     Button(
@@ -853,7 +962,42 @@ fun RideDetailScreen(
                                         }
                                     }
                                 }
+                            } else if (ride.viewer.isStaff &&
+                                canDriveUpdate &&
+                                ride.status in setOf("confirmed", "in_progress") &&
+                                ride.pickedUpAt == null
+                            ) {
+                                OutlinedButton(
+                                    onClick = { UiHaptics.tick(view); confirmNoShow = true },
+                                    enabled = !state.busy,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Outlined.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(stringResource(R.string.ride_status_no_show))
+                                }
                             }
+
+                            val hasMyLockedDraft = state.drafts.any {
+                                it.lockIsMine && it.status in setOf("draft", "returned")
+                            }
+                            LaunchedEffect(lifecycleOwner, hasMyLockedDraft) {
+                                if (!hasMyLockedDraft) return@LaunchedEffect
+                                lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                                    while (true) {
+                                        delay(180_000L)
+                                        vm.renewActiveRideDraftLocks()
+                                    }
+                                }
+                            }
+                            RideDetailStaffAndDraftsSection(
+                                ride = ride,
+                                me = me,
+                                state = state,
+                                vm = vm,
+                                onOpenRide = { nextId -> nav.navigate(AppRoute.RideDetail(nextId)) },
+                            )
 
                             val canViewLive = ride.viewer.isPassenger || ride.viewer.isDriver || ride.viewer.isStaff
                             val hasPrimaryCtaAbove = (ride.viewer.isPassenger && canRidesUpdate && (
@@ -923,34 +1067,98 @@ fun RideDetailScreen(
 
     if (confirmUnable) {
         AlertDialog(
-            onDismissRequest = { confirmUnable = false },
+            onDismissRequest = { confirmUnable = false; unableNotes = "" },
             title = { Text(stringResource(R.string.ride_unable_confirm_title)) },
-            text = { Text(stringResource(R.string.ride_unable_confirm_body)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text(stringResource(R.string.ride_unable_confirm_body))
+                    OutlinedTextField(
+                        value = unableNotes,
+                        onValueChange = { unableNotes = it },
+                        label = { Text(stringResource(R.string.ride_unable_reason_hint)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(
-                    onClick = { vm.readiness(Readiness.UNABLE); confirmUnable = false },
+                    onClick = {
+                        vm.readiness(Readiness.UNABLE, unableNotes.trim().ifBlank { null })
+                        unableNotes = ""
+                        confirmUnable = false
+                    },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 ) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmUnable = false }) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(onClick = { confirmUnable = false; unableNotes = "" }) { Text(stringResource(R.string.common_cancel)) }
             },
         )
     }
 
     if (confirmCancel) {
         AlertDialog(
-            onDismissRequest = { confirmCancel = false },
+            onDismissRequest = { confirmCancel = false; cancelReason = "" },
             title = { Text(stringResource(R.string.ride_cancel)) },
-            text = { Text(stringResource(R.string.ride_cancel_confirm)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text(stringResource(R.string.ride_cancel_confirm))
+                    OutlinedTextField(
+                        value = cancelReason,
+                        onValueChange = { cancelReason = it },
+                        label = { Text(stringResource(R.string.ride_cancel_reason_hint)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(
-                    onClick = { vm.cancel(null); confirmCancel = false },
+                    onClick = {
+                        vm.cancel(cancelReason.trim().ifBlank { null })
+                        cancelReason = ""
+                        confirmCancel = false
+                    },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 ) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmCancel = false }) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(onClick = { confirmCancel = false; cancelReason = "" }) { Text(stringResource(R.string.common_cancel)) }
+            },
+        )
+    }
+
+    if (confirmDecline) {
+        AlertDialog(
+            onDismissRequest = { confirmDecline = false },
+            title = { Text(stringResource(R.string.ride_decline_confirm_title)) },
+            text = { Text(stringResource(R.string.ride_decline_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.respond(false); confirmDecline = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDecline = false }) { Text(stringResource(R.string.common_cancel)) }
+            },
+        )
+    }
+
+    if (confirmNoShow) {
+        AlertDialog(
+            onDismissRequest = { confirmNoShow = false },
+            title = { Text(stringResource(R.string.ride_noshow_confirm_title)) },
+            text = { Text(stringResource(R.string.ride_noshow_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.noShow(); confirmNoShow = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmNoShow = false }) { Text(stringResource(R.string.common_cancel)) }
             },
         )
     }

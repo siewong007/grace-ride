@@ -79,7 +79,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
-import androidx.core.os.CancellationSignal
+import android.os.CancellationSignal
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -109,7 +109,8 @@ fun SavedAddressesScreen(container: AppContainer, nav: NavHostController) {
     val vm: SavedAddressesViewModel = viewModel(factory = SavedAddressesViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    val me = container.auth.me
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val canCreate = me?.can("rides", "create") == true
     val canUpdate = me?.can("rides", "update") == true
     val canDelete = me?.can("rides", "delete") == true

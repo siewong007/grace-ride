@@ -16,6 +16,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +30,11 @@ import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.NotificationPrefsDto
 import org.pjstatecm.graceride.data.api.PasskeyInfo
 import org.pjstatecm.graceride.data.api.ProfileUpdateReq
+import org.pjstatecm.graceride.data.api.PushConfigDto
+import org.pjstatecm.graceride.data.api.PushSubscriptionsDto
+import org.pjstatecm.graceride.data.api.TotpSetupDto
 import org.pjstatecm.graceride.data.api.UpdateNotificationPrefsReq
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.data.media.prepareImageUpload
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.platform.BiometricSignResult
@@ -39,6 +44,13 @@ data class ProfileUiState(
     val passkeys: List<PasskeyInfo> = emptyList(),
     val biometrics: List<BiometricInfo> = emptyList(),
     val notifPrefs: NotificationPrefsDto? = null,
+    val totpSetup: TotpSetupDto? = null,
+    val backupCodes: List<String> = emptyList(),
+    val calendarFeedEnabled: Boolean? = null,
+    val calendarFeedUrl: String? = null,
+    val pushConfig: PushConfigDto? = null,
+    val pushSubs: PushSubscriptionsDto? = null,
+    val telegramLinkUrl: String? = null,
     val busy: Boolean = false,
     val message: String? = null,
     val error: String? = null,
@@ -231,21 +243,47 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 onDone()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(busy = false, error = e.message)
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(busy = false)
+                throw e
             } catch (e: Exception) {
-                _state.value = _state.value.copy(busy = false, error = e.message ?: "Upload failed")
+                _state.value = _state.value.copy(busy = false, error = e.message ?: context.getString(R.string.costs_err_upload))
             }
         }
     }
 
     fun setLang(lang: String, onLocaleChanged: () -> Unit) {
         container.lang = lang
+        container.markLangPendingSync(true)
         _state.value = _state.value.copy(lang = lang)
+        onLocaleChanged()
+        container.appScope.launch {
+            runSuspendCatching {
+                container.community.updateProfile(ProfileUpdateReq(lang = lang))
+                container.markLangPendingSync(false)
+                container.auth.refresh()
+                _state.value = _state.value.copy(me = container.auth.me)
+            }
+        }
+    }
+
+    fun syncServerLangToApp() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null, message = null)
         viewModelScope.launch {
             try {
-                container.community.updateProfile(ProfileUpdateReq(lang = lang))
+                container.community.updateProfile(ProfileUpdateReq(lang = container.lang))
+                container.markLangPendingSync(false)
                 container.auth.refresh()
-            } catch (_: ApiException) { }
-            onLocaleChanged()
+                _state.value = _state.value.copy(
+                    busy = false,
+                    me = container.auth.me,
+                    lang = container.lang,
+                    message = "lang_synced",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(busy = false, error = e.message)
+            }
         }
     }
 
@@ -285,6 +323,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         } catch (e: ApiException) {
             _state.value = _state.value.copy(error = e.message)
             false
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.reauth_failed))
             false
@@ -338,6 +378,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 if (hasPasskeys) return reauthWithPasskey(context)
                 _state.value = _state.value.copy(error = e.message)
                 return false
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (hasPasskeys) return reauthWithPasskey(context)
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.biometric_failed))
@@ -363,7 +405,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             suspend fun handleResult(res: BiometricSignResult) {
                 when (res) {
                     is BiometricSignResult.Success -> {
-                        val updated = runCatching { container.auth.biometrics() }.getOrNull()
+                        val updated = runSuspendCatching { container.auth.biometrics() }.getOrNull()
                         _state.value = _state.value.copy(
                             me = container.auth.me,
                             biometrics = updated ?: _state.value.biometrics,
@@ -390,6 +432,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                             handleResult(enrollBiometricOnce(context))
                         } catch (retryErr: ApiException) {
                             _state.value = _state.value.copy(error = retryErr.message)
+                        } catch (retryErr: CancellationException) {
+                            throw retryErr
                         } catch (retryErr: Exception) {
                             _state.value = _state.value.copy(error = retryErr.message ?: context.getString(R.string.biometric_failed))
                         }
@@ -397,6 +441,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 } else {
                     _state.value = _state.value.copy(error = e.message)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.biometric_failed))
             } finally {
@@ -425,7 +471,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             suspend fun syncAfterDisable() {
                 withContext(Dispatchers.IO) { container.biometric.clearEnrollmentLocal() }
-                val updated = runCatching { container.auth.biometrics() }.getOrNull()
+                val updated = runSuspendCatching { container.auth.biometrics() }.getOrNull()
                 _state.value = _state.value.copy(
                     me = container.auth.me,
                     biometrics = updated ?: _state.value.biometrics.filterNot { it.id == serverId },
@@ -436,13 +482,19 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 container.auth.deleteBiometric(serverId)
                 syncAfterDisable()
             } catch (e: ApiException) {
-                if (e.code == "RECENT_SIGN_IN_REQUIRED") {
+                if (e.status == 404) {
+                    syncAfterDisable()
+                } else if (e.code == "RECENT_SIGN_IN_REQUIRED") {
                     if (reauthWithStrongAuth(context)) {
                         try {
                             container.auth.deleteBiometric(serverId)
                             syncAfterDisable()
                         } catch (retryErr: ApiException) {
-                            _state.value = _state.value.copy(error = retryErr.message)
+                            if (retryErr.status == 404) {
+                                syncAfterDisable()
+                            } else {
+                                _state.value = _state.value.copy(error = retryErr.message)
+                            }
                         }
                     }
                 } else {
@@ -459,7 +511,12 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         _state.value = _state.value.copy(busy = true, error = null, message = null)
         viewModelScope.launch {
             suspend fun syncAfterDelete() {
-                val updated = runCatching { container.auth.biometrics() }.getOrNull()
+                val enrolled = container.biometric.enrollment.value
+                val deletedCredId = _state.value.biometrics.firstOrNull { it.id == id }?.credential_id
+                if (enrolled != null && (enrolled.id == id || (deletedCredId != null && enrolled.credentialId == deletedCredId))) {
+                    withContext(Dispatchers.IO) { container.biometric.clearEnrollmentLocal() }
+                }
+                val updated = runSuspendCatching { container.auth.biometrics() }.getOrNull()
                 _state.value = _state.value.copy(
                     me = container.auth.me,
                     biometrics = updated ?: _state.value.biometrics.filterNot { it.id == id },
@@ -469,13 +526,19 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 container.auth.deleteBiometric(id)
                 syncAfterDelete()
             } catch (e: ApiException) {
-                if (e.code == "RECENT_SIGN_IN_REQUIRED") {
+                if (e.status == 404) {
+                    syncAfterDelete()
+                } else if (e.code == "RECENT_SIGN_IN_REQUIRED") {
                     if (reauthWithStrongAuth(context)) {
                         try {
                             container.auth.deleteBiometric(id)
                             syncAfterDelete()
                         } catch (retryErr: ApiException) {
-                            _state.value = _state.value.copy(error = retryErr.message)
+                            if (retryErr.status == 404) {
+                                syncAfterDelete()
+                            } else {
+                                _state.value = _state.value.copy(error = retryErr.message)
+                            }
                         }
                     }
                 } else {
@@ -505,6 +568,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                         try {
                             registerPasskeyOnce(context)
                         } catch (_: CreateCredentialCancellationException) {
+                        } catch (retryErr: CancellationException) {
+                            throw retryErr
                         } catch (retryErr: Exception) {
                             _state.value = _state.value.copy(error = retryErr.message)
                         }
@@ -512,6 +577,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 } else {
                     _state.value = _state.value.copy(error = e.message)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
             } finally {
@@ -526,7 +593,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             suspend fun syncAfterDelete() {
                 container.auth.refresh()
-                val updated = runCatching { container.community.passkeys() }.getOrNull()
+                val updated = runSuspendCatching { container.community.passkeys() }.getOrNull()
                 _state.value = _state.value.copy(
                     me = container.auth.me,
                     passkeys = updated ?: _state.value.passkeys.filterNot { it.id == id },
@@ -556,6 +623,304 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
 
     fun logout() { viewModelScope.launch { container.auth.logout() } }
     fun logoutAll() { viewModelScope.launch { container.auth.logoutAll() } }
+
+    fun lockSessionNow(context: Context) {
+        if (_state.value.busy) return
+        val m = _state.value.me ?: container.auth.me
+        val hasMethod = m != null && (
+            m.passkeyCount > 0 ||
+                m.biometricCount > 0 ||
+                m.totpEnabled ||
+                container.biometric.enrollment.value?.userId == m.id
+            )
+        if (!hasMethod) {
+            _state.value = _state.value.copy(error = context.getString(R.string.profile_lock_needs_method))
+            return
+        }
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                container.auth.lockSession()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun startTotpSetup(context: Context) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val setup = container.auth.totpSetup()
+                _state.value = _state.value.copy(totpSetup = setup)
+            } catch (e: ApiException) {
+                val hasStrongAuth = (container.auth.me?.passkeyCount ?: _state.value.passkeys.size) > 0 ||
+                    (container.auth.me?.biometricCount ?: _state.value.biometrics.size) > 0
+                if (e.code == "RECENT_SIGN_IN_REQUIRED" && hasStrongAuth && reauthWithStrongAuth(context)) {
+                    try {
+                        val setup = container.auth.totpSetup()
+                        _state.value = _state.value.copy(totpSetup = setup)
+                    } catch (retryErr: ApiException) {
+                        _state.value = _state.value.copy(error = retryErr.message)
+                    }
+                } else {
+                    _state.value = _state.value.copy(error = e.message)
+                }
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun cancelTotpSetup() {
+        _state.value = _state.value.copy(totpSetup = null)
+    }
+
+    fun enableTotp(code: String) {
+        val clean = code.trim()
+        if (clean.isEmpty() || _state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val res = container.auth.totpEnable(clean)
+                _state.value = _state.value.copy(
+                    me = container.auth.me,
+                    totpSetup = null,
+                    backupCodes = res.backupCodes,
+                    message = "totp_enabled",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun dismissBackupCodes() {
+        _state.value = _state.value.copy(backupCodes = emptyList())
+    }
+
+    fun regenerateBackupCodes(context: Context) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val res = container.auth.regenerateBackupCodes()
+                _state.value = _state.value.copy(
+                    me = container.auth.me,
+                    backupCodes = res.backupCodes,
+                    message = "backup_codes_regen",
+                )
+            } catch (e: ApiException) {
+                val hasStrongAuth = (container.auth.me?.passkeyCount ?: _state.value.passkeys.size) > 0 ||
+                    (container.auth.me?.biometricCount ?: _state.value.biometrics.size) > 0
+                if (e.code == "RECENT_SIGN_IN_REQUIRED" && hasStrongAuth && reauthWithStrongAuth(context)) {
+                    try {
+                        val res = container.auth.regenerateBackupCodes()
+                        _state.value = _state.value.copy(
+                            me = container.auth.me,
+                            backupCodes = res.backupCodes,
+                            message = "backup_codes_regen",
+                        )
+                    } catch (retryErr: ApiException) {
+                        _state.value = _state.value.copy(error = retryErr.message)
+                    }
+                } else {
+                    _state.value = _state.value.copy(error = e.message)
+                }
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun verifyTotpForStaff(code: String) {
+        val clean = code.trim()
+        if (clean.isEmpty() || _state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                container.auth.totpVerify(clean)
+                _state.value = _state.value.copy(
+                    me = container.auth.me,
+                    message = "staff_2fa_verified",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun setBadgesOptOut(optOut: Boolean) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                container.community.updateProfile(ProfileUpdateReq(badges_opt_out = optOut))
+                container.auth.refresh()
+                _state.value = _state.value.copy(me = container.auth.me, message = "saved")
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun loadCalendarFeed() {
+        viewModelScope.launch {
+            try {
+                val res = container.community.calendarFeed()
+                _state.value = _state.value.copy(calendarFeedEnabled = res.enabled)
+            } catch (_: ApiException) { }
+        }
+    }
+
+    fun rotateCalendarFeed() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val res = container.community.rotateCalendarFeed()
+                val full = container.webUrl(res.icsPath)
+                _state.value = _state.value.copy(
+                    calendarFeedEnabled = true,
+                    calendarFeedUrl = full,
+                    message = "calendar_ready",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun revokeCalendarFeed() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                container.community.revokeCalendarFeed()
+                _state.value = _state.value.copy(
+                    calendarFeedEnabled = false,
+                    calendarFeedUrl = null,
+                    message = "calendar_revoked",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun loadPushAndTelegram() {
+        viewModelScope.launch {
+            try {
+                val cfg = container.community.pushConfig()
+                val subs = container.community.pushSubscriptions()
+                _state.value = _state.value.copy(pushConfig = cfg, pushSubs = subs)
+            } catch (_: ApiException) { }
+        }
+    }
+
+    fun connectTelegram(onOpenUrl: (String) -> Unit) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val res = container.community.telegramLinkToken()
+                _state.value = _state.value.copy(telegramLinkUrl = res.url)
+                if (res.url.isNotBlank()) onOpenUrl(res.url)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun testTelegram() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val res = container.community.telegramTest()
+                if (res.delivered) {
+                    _state.value = _state.value.copy(message = "telegram_test_sent")
+                } else {
+                    _state.value = _state.value.copy(error = res.error ?: "Telegram delivery failed")
+                }
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun disconnectTelegram() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                container.community.updateNotificationPrefs(UpdateNotificationPrefsReq(telegram_chat_id = ""))
+                val prefs = container.community.notificationPrefs()
+                withContext(Dispatchers.IO) {
+                    org.pjstatecm.graceride.notifications.RealtimeStreamClient.writeCachedPrefs(container.secureStore, prefs)
+                }
+                _state.value = _state.value.copy(
+                    notifPrefs = prefs,
+                    telegramLinkUrl = null,
+                    message = "telegram_disconnected",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun deletePushSubscription(id: Long) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                container.community.deletePushSubscription(id)
+                val subs = container.community.pushSubscriptions()
+                _state.value = _state.value.copy(pushSubs = subs, message = "push_removed")
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun sendTestPush() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val res = container.community.pushTest()
+                _state.value = _state.value.copy(
+                    message = "push_test:${res.delivered}:${res.total}",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
 
     companion object {
         fun factory(container: AppContainer) = viewModelFactory { initializer { ProfileViewModel(container) } }

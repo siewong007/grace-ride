@@ -2,9 +2,13 @@ package org.pjstatecm.graceride.data.media
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ImageDecoder
 import android.net.Uri
+import androidx.core.graphics.createBitmap
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 data class PreparedUpload(
     val filename: String,
@@ -15,6 +19,23 @@ data class PreparedUpload(
 const val MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 class FileTooLargeException : IllegalStateException("File exceeds 8 MB limit")
+
+private fun readHeader(stream: java.io.InputStream, len: Int): ByteArray {
+    val buf = ByteArray(len)
+    var off = 0
+    while (off < len) {
+        val n = stream.read(buf, off, len - off)
+        if (n <= 0) break
+        off += n
+    }
+    return buf.copyOf(off)
+}
+
+private fun isGifMagic(bytes: ByteArray): Boolean {
+    if (bytes.size < 6) return false
+    val sig = String(bytes, 0, 6, Charsets.US_ASCII)
+    return sig == "GIF87a" || sig == "GIF89a"
+}
 
 private fun readBounded(stream: java.io.InputStream, maxBytes: Int): ByteArray {
     val out = ByteArrayOutputStream()
@@ -42,17 +63,21 @@ fun prepareImageUpload(
     maxDimensionPx: Int,
     quality: Int = 85,
 ): PreparedUpload {
+    require(maxDimensionPx > 0) { "maxDimensionPx must be positive" }
     val resolver = context.contentResolver
-    val resolvedMime = resolver.getType(uri) ?: "image/jpeg"
 
-    // Preserve animated GIFs verbatim, bounded at 8 MiB.
-    if (resolvedMime.equals("image/gif", ignoreCase = true)) {
+    // Preserve verified animated GIFs verbatim, bounded at 8 MiB.
+    val header = resolver.openInputStream(uri)?.use { readHeader(it, 6) }
+        ?: throw IllegalStateException("Cannot read selected image")
+    if (isGifMagic(header)) {
         val raw = resolver.openInputStream(uri)?.use { readBounded(it, MAX_UPLOAD_BYTES) }
             ?: throw IllegalStateException("Cannot read selected image")
-        return PreparedUpload(filename = "$prefix.gif", mime = "image/gif", bytes = raw)
+        if (isGifMagic(raw)) {
+            return PreparedUpload(filename = "$prefix.gif", mime = "image/gif", bytes = raw)
+        }
     }
 
-    val decoded = runCatching {
+    val decoded = try {
         val source = ImageDecoder.createSource(resolver, uri)
         ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             // Software bitmap is required for Bitmap.compress(...) across all devices.
@@ -67,28 +92,36 @@ fun prepareImageUpload(
                 decoder.setTargetSize(targetW, targetH)
             }
         }
-    }.getOrNull()
+    } catch (e: Exception) {
+        throw IOException("Unable to sanitize image upload without EXIF metadata stripping", e)
+    }
 
-    if (decoded != null) {
-        try {
-            val keepPng = decoded.hasAlpha() && (
-                resolvedMime.equals("image/png", ignoreCase = true) ||
-                    resolvedMime.equals("image/webp", ignoreCase = true)
-                )
-            if (keepPng) {
-                val out = ByteArrayOutputStream(32 * 1024)
-                if (!decoded.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                    throw IllegalStateException("Image compression failed")
-                }
-                val bytes = out.toByteArray()
-                if (bytes.size <= MAX_UPLOAD_BYTES) {
-                    return PreparedUpload(filename = "$prefix.png", mime = "image/png", bytes = bytes)
-                }
+    try {
+        val hasAlpha = decoded.hasAlpha()
+        if (hasAlpha) {
+            val out = ByteArrayOutputStream(32 * 1024)
+            if (!decoded.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                throw IllegalStateException("Image compression failed")
             }
+            val bytes = out.toByteArray()
+            if (bytes.size <= MAX_UPLOAD_BYTES) {
+                return PreparedUpload(filename = "$prefix.png", mime = "image/png", bytes = bytes)
+            }
+        }
+        val jpegSource = if (hasAlpha) {
+            createBitmap(decoded.width, decoded.height).also { flat ->
+                val canvas = Canvas(flat)
+                canvas.drawColor(Color.WHITE)
+                canvas.drawBitmap(decoded, 0f, 0f, null)
+            }
+        } else {
+            decoded
+        }
+        try {
             var q = quality.coerceIn(45, 95)
             while (q >= 45) {
                 val out = ByteArrayOutputStream(32 * 1024)
-                if (!decoded.compress(Bitmap.CompressFormat.JPEG, q, out)) {
+                if (!jpegSource.compress(Bitmap.CompressFormat.JPEG, q, out)) {
                     throw IllegalStateException("Image compression failed")
                 }
                 val bytes = out.toByteArray()
@@ -99,9 +132,11 @@ fun prepareImageUpload(
             }
             throw FileTooLargeException()
         } finally {
-            decoded.recycle()
+            if (jpegSource !== decoded) {
+                jpegSource.recycle()
+            }
         }
+    } finally {
+        decoded.recycle()
     }
-
-    throw java.io.IOException("Unable to sanitize image upload without EXIF metadata stripping")
 }

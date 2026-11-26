@@ -109,6 +109,8 @@ class BiometricGateViewModel(private val container: AppContainer) : ViewModel() 
                         _state.value = _state.value.copy(error = res.message)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.biometric_failed))
             } finally {
@@ -142,6 +144,8 @@ class BiometricGateViewModel(private val container: AppContainer) : ViewModel() 
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.reauth_failed))
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(error = e.message)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.reauth_failed))
             } finally {
@@ -247,6 +251,19 @@ fun BiometricGateScreen(container: AppContainer, me: Me) {
                         Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(Spacing.xs))
                         Text(stringResource(R.string.biometric_gate_passkey_btn))
+                    }
+                } else if (me.totpEnabled) {
+                    OutlinedButton(
+                        onClick = {
+                            UiHaptics.confirm(view)
+                            container.auth.onLocked()
+                        },
+                        enabled = !state.busy,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    ) {
+                        Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(stringResource(R.string.biometric_gate_totp_btn))
                     }
                 }
                 state.error?.let {

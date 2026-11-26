@@ -1,10 +1,9 @@
 package org.pjstatecm.graceride.ui.screens.login
 
-import android.annotation.SuppressLint
-import android.webkit.JavascriptInterface
-import android.webkit.WebView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,6 +27,7 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,12 +38,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,11 +53,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.UiHaptics
@@ -68,18 +63,24 @@ import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.GraceRideBrandMark
 import org.pjstatecm.graceride.ui.components.GraceRideWordmark
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
+import org.pjstatecm.graceride.ui.components.TurnstileDialog
 import org.pjstatecm.graceride.ui.theme.Spacing
 import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun LoginScreen(container: AppContainer) {
+fun LoginScreen(
+    container: AppContainer,
+    onOpenTerms: () -> Unit = {},
+    onOpenLicenses: () -> Unit = {},
+) {
     val vm: LoginViewModel = viewModel(factory = LoginViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val biometricEnrollment by vm.biometricEnrollment.collectAsStateWithLifecycle()
     val keyInvalidatedNotice by vm.keyInvalidatedNotice.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val view = LocalView.current
-    var serverField by remember { mutableStateOf(state.serverUrl) }
+    var serverField by androidx.compose.runtime.saveable.rememberSaveable(state.serverUrl) { mutableStateOf(state.serverUrl) }
 
     LaunchedEffect(Unit) { vm.loadTurnstileConfig() }
 
@@ -116,12 +117,22 @@ fun LoginScreen(container: AppContainer) {
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 if (keyInvalidatedNotice) {
-                    CalloutBanner(
-                        icon = Icons.Outlined.WarningAmber,
-                        text = stringResource(R.string.biometric_invalidated_notice),
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                    ) {
+                        CalloutBanner(
+                            icon = Icons.Outlined.WarningAmber,
+                            text = stringResource(R.string.biometric_invalidated_notice),
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { vm.dismissKeyInvalidatedNotice() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.common_close))
+                        }
+                    }
                 }
                 biometricEnrollment?.let { enrolled ->
                     val displayAccount = enrolled.userName.ifBlank { enrolled.email }
@@ -237,6 +248,12 @@ fun LoginScreen(container: AppContainer) {
                         contentColor = MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
+                TextButton(
+                    onClick = vm::openRecovery,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Text(stringResource(R.string.login_recovery_link))
+                }
             }
         }
 
@@ -275,6 +292,118 @@ fun LoginScreen(container: AppContainer) {
                 }
             }
         }
+
+        Spacer(Modifier.height(Spacing.md))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onOpenTerms) {
+                Text(stringResource(R.string.login_terms_link))
+            }
+            Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = onOpenLicenses) {
+                Text(stringResource(R.string.login_licenses_link))
+            }
+        }
+    }
+
+    if (state.recoveryOpen) {
+        val presets = listOf(
+            stringResource(R.string.login_recovery_preset_new_phone),
+            stringResource(R.string.login_recovery_preset_lost),
+            stringResource(R.string.login_recovery_preset_browser),
+        )
+        val recErr = state.recoveryError ?: state.recoveryErrorRes?.let { stringResource(it) }
+        AlertDialog(
+            onDismissRequest = vm::closeRecovery,
+            title = {
+                Text(
+                    if (state.recoverySent) {
+                        stringResource(R.string.login_recovery_sent_title)
+                    } else {
+                        stringResource(R.string.login_recovery_title)
+                    },
+                )
+            },
+            text = {
+                if (state.recoverySent) {
+                    Text(
+                        stringResource(R.string.login_recovery_sent_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Text(
+                            stringResource(R.string.login_recovery_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedTextField(
+                            value = state.recoveryEmail,
+                            onValueChange = vm::setRecoveryEmail,
+                            label = { Text(stringResource(R.string.login_email)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Email,
+                                imeAction = ImeAction.Next,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                            presets.forEach { preset ->
+                                FilterChip(
+                                    selected = state.recoveryReason.trim() == preset,
+                                    onClick = { vm.setRecoveryReason(preset) },
+                                    label = { Text(preset) },
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = state.recoveryReason,
+                            onValueChange = vm::setRecoveryReason,
+                            label = { Text(stringResource(R.string.login_recovery_reason_label)) },
+                            placeholder = { Text(stringResource(R.string.login_recovery_reason_hint)) },
+                            maxLines = 3,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        recErr?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (state.recoverySent) {
+                    TextButton(onClick = vm::closeRecovery) {
+                        Text(stringResource(R.string.login_recovery_done))
+                    }
+                } else {
+                    Button(
+                        onClick = { vm.submitRecovery() },
+                        enabled = !state.recoverySubmitting,
+                        colors = graceRidePrimaryButtonColors(),
+                    ) {
+                        if (state.recoverySubmitting) {
+                            InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                        } else {
+                            Text(stringResource(R.string.login_recovery_submit))
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                if (!state.recoverySent) {
+                    TextButton(onClick = vm::closeRecovery) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
+                }
+            },
+        )
     }
 
     if (state.turnstilePrompted && !state.turnstileSiteKey.isNullOrBlank()) {
@@ -283,119 +412,13 @@ fun LoginScreen(container: AppContainer) {
             baseUrl = container.baseUrl,
             action = state.turnstileAction,
             onToken = { token ->
-                if (state.turnstileAction == "biometric_login") {
-                    vm.signInWithBiometrics(context, token)
-                } else {
-                    vm.signInWithPasskey(context, token)
+                when (state.turnstileAction) {
+                    "biometric_login" -> vm.signInWithBiometrics(context, token)
+                    "recovery_request" -> vm.submitRecovery(token)
+                    else -> vm.signInWithPasskey(context, token)
                 }
             },
             onDismiss = vm::dismissTurnstile,
         )
     }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun TurnstileDialog(
-    siteKey: String,
-    baseUrl: String,
-    action: String,
-    onToken: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val safeAction = if (action == "biometric_login") "biometric_login" else "passkey_login"
-    val webViewHolder = remember { arrayOfNulls<WebView>(1) }
-    val scope = rememberCoroutineScope()
-    DisposableEffect(Unit) {
-        onDispose {
-            webViewHolder[0]?.destroy()
-            webViewHolder[0] = null
-        }
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.login_turnstile_title)) },
-        text = {
-            AndroidView(
-                modifier = Modifier.fillMaxWidth().height(96.dp),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        val baseOrigin = runCatching {
-                            val parsed = android.net.Uri.parse(baseUrl)
-                            val scheme = parsed.scheme?.lowercase()
-                            val host = parsed.host?.lowercase()
-                            if ((scheme == "https" || scheme == "http") && !host.isNullOrBlank()) {
-                                scheme to host
-                            } else {
-                                null
-                            }
-                        }.getOrNull()
-                        val safeBaseUrl = if (baseOrigin != null) baseUrl else "https://graceride.saliminn.my/"
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        settings.javaScriptCanOpenWindowsAutomatically = false
-                        settings.setSupportMultipleWindows(false)
-                        webViewClient = object : android.webkit.WebViewClient() {
-                            override fun shouldOverrideUrlLoading(
-                                view: WebView?,
-                                request: android.webkit.WebResourceRequest?,
-                            ): Boolean {
-                                val u = request?.url ?: return true
-                                val scheme = u.scheme?.lowercase()
-                                val host = u.host?.lowercase()
-                                val isCloudflare = scheme == "https" && host == "challenges.cloudflare.com"
-                                val isBase = baseOrigin != null && scheme == baseOrigin.first && host == baseOrigin.second
-                                return !(isCloudflare || isBase)
-                            }
-                        }
-                        addJavascriptInterface(
-                            object {
-                                @JavascriptInterface
-                                fun onToken(token: String) {
-                                    scope.launch(Dispatchers.Main.immediate) { onToken(token) }
-                                }
-                            },
-                            "GraceTurnstile",
-                        )
-                        val html = """
-                            <!doctype html>
-                            <html>
-                            <head>
-                              <meta name="viewport" content="width=device-width,initial-scale=1"/>
-                              <script>
-                                function onLoadTurnstile() {
-                                  if (!window.turnstile) return;
-                                  window.turnstile.render('#cf-turnstile', {
-                                    sitekey: '$siteKey',
-                                    action: '$safeAction',
-                                    callback: function(token) {
-                                      if (window.GraceTurnstile && token) {
-                                        window.GraceTurnstile.onToken(token);
-                                      }
-                                    }
-                                  });
-                                }
-                              </script>
-                              <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onLoadTurnstile&render=explicit" async defer></script>
-                            </head>
-                            <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:80px;">
-                              <div id="cf-turnstile"></div>
-                            </body>
-                            </html>
-                        """.trimIndent()
-                        loadDataWithBaseURL(safeBaseUrl, html, "text/html", "UTF-8", null)
-                        webViewHolder[0] = this
-                    }
-                },
-            )
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.common_cancel))
-            }
-        },
-    )
 }

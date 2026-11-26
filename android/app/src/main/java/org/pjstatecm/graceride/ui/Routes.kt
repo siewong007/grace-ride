@@ -18,23 +18,54 @@ sealed interface AppRoute {
     @Serializable data class RideDetail(val id: Long, val justBooked: Boolean = false) : AppRoute
     @Serializable data class RideNew(val eventId: Long? = null, val proxy: Boolean = false) : AppRoute
     @Serializable data object Events : AppRoute
-    @Serializable data class EventDetail(val id: Long, val checkinCode: String? = null) : AppRoute
+    @Serializable data class EventNew(val duplicateId: Long? = null) : AppRoute
+    @Serializable data class EventEdit(val id: Long) : AppRoute
+    @Serializable data class EventDetail(
+        val id: Long,
+        val checkinCode: String? = null,
+        val openCheckin: Boolean = false,
+    ) : AppRoute
     @Serializable data object Costs : AppRoute
     @Serializable data object History : AppRoute
     @Serializable data object Profile : AppRoute
     @Serializable data object DriverSettings : AppRoute
     @Serializable data object ProxyRiders : AppRoute
+    @Serializable data object Family : AppRoute
     @Serializable data object SavedAddresses : AppRoute
     @Serializable data object PersonalDetails : AppRoute
     @Serializable data object AppearanceSettings : AppRoute
     @Serializable data object NotificationSettings : AppRoute
     @Serializable data object SecuritySettings : AppRoute
+    @Serializable data object TermsPublic : AppRoute
+    @Serializable data object Licenses : AppRoute
+    @Serializable data class Invite(val token: String) : AppRoute
+    @Serializable data class Visit(val token: String) : AppRoute
+    @Serializable data class CarePass(val token: String) : AppRoute
     @Serializable data object Notifications : AppRoute
     @Serializable data object DriveHub : AppRoute
+    @Serializable data class TrafficHub(
+        val tab: String = "plans",
+        val view: String = "rides",
+        val areaTab: String = "photos",
+        val status: String? = null,
+        val attention: Boolean = false,
+        val planFilter: String? = null,
+    ) : AppRoute
+    @Serializable data class PlanTransport(
+        val eventId: Long,
+        val draftId: Long? = null,
+    ) : AppRoute
     @Serializable data class Studio(
         val shape: String? = null,
         val color: String? = null,
         val face: String? = null,
+    ) : AppRoute
+    @Serializable data class AdminMembers(
+        val tab: String = "members",
+        val status: String? = null,
+    ) : AppRoute
+    @Serializable data class Announcements(
+        val manage: Boolean = false,
     ) : AppRoute
 
     companion object {
@@ -62,13 +93,33 @@ sealed interface AppRoute {
                 clean == Routes.PROFILE -> Profile
                 clean == Routes.DRIVER_SETTINGS -> DriverSettings
                 clean == Routes.PROXY_RIDERS -> ProxyRiders
+                clean == Routes.FAMILY -> Family
                 clean == Routes.SAVED_ADDRESSES -> SavedAddresses
                 clean == Routes.PERSONAL_DETAILS -> PersonalDetails
                 clean == Routes.APPEARANCE_SETTINGS -> AppearanceSettings
                 clean == Routes.NOTIFICATION_SETTINGS -> NotificationSettings
                 clean == Routes.SECURITY_SETTINGS -> SecuritySettings
+                clean == Routes.TERMS_PUBLIC -> TermsPublic
+                clean == Routes.LICENSES -> Licenses
+                clean.startsWith("invite/") -> clean.removePrefix("invite/").trim().takeIf { it.isNotEmpty() }?.let { Invite(it) }
+                clean.startsWith("visit/") -> clean.removePrefix("visit/").trim().takeIf { it.isNotEmpty() }?.let { Visit(it) }
+                clean.startsWith("care/") -> clean.removePrefix("care/").trim().takeIf { it.isNotEmpty() }?.let { CarePass(it) }
                 clean == Routes.NOTIFICATIONS -> Notifications
                 clean == Routes.DRIVE_HUB -> DriveHub
+                clean == Routes.TRAFFIC -> TrafficHub(
+                    tab = params["tab"]?.takeIf { it in setOf("plans", "rides", "live", "areas") } ?: "plans",
+                    view = params["view"]?.takeIf { it in setOf("rides", "drafts") } ?: "rides",
+                    areaTab = params["areaTab"]?.takeIf { it in setOf("photos", "fares", "areas") } ?: "photos",
+                    status = params["status"]?.takeIf { it.isNotBlank() },
+                    attention = params["attention"] == "1" || params["attention"].equals("true", ignoreCase = true),
+                    planFilter = params["planFilter"]?.takeIf { it.isNotBlank() },
+                )
+                clean.startsWith("plan-transport/") -> clean.removePrefix("plan-transport/").toLongOrNull()?.let { eventId ->
+                    PlanTransport(
+                        eventId = eventId,
+                        draftId = params["draftId"]?.toLongOrNull(),
+                    )
+                }
                 clean == "ride-new" -> RideNew(
                     eventId = params["event"]?.toLongOrNull(),
                     proxy = params["proxy"] == "1",
@@ -78,12 +129,26 @@ sealed interface AppRoute {
                     color = params["color"],
                     face = params["face"],
                 )
+                clean == Routes.ADMIN_MEMBERS -> AdminMembers(
+                    tab = params["tab"]?.takeIf { it in setOf("members", "invites", "recovery") } ?: "members",
+                    status = params["status"]?.takeIf { it.isNotBlank() },
+                )
+                clean == Routes.ANNOUNCEMENTS -> Announcements(
+                    manage = params["manage"] == "1" || params["manage"].equals("true", ignoreCase = true),
+                )
                 clean.startsWith("ride/") -> clean.removePrefix("ride/").toLongOrNull()?.let { id ->
                     RideDetail(id = id, justBooked = params["new"] == "1")
                 }
                 clean.startsWith("event/") -> clean.removePrefix("event/").toLongOrNull()?.let { id ->
-                    EventDetail(id = id, checkinCode = params["code"]?.takeIf { it.isNotBlank() })
+                    val code = params["code"]?.takeIf { it.isNotBlank() }
+                    EventDetail(
+                        id = id,
+                        checkinCode = code,
+                        openCheckin = code != null || params["checkin"] == "1",
+                    )
                 }
+                clean == Routes.EVENT_NEW -> EventNew(duplicateId = params["duplicate"]?.toLongOrNull())
+                clean.startsWith("event-edit/") -> clean.removePrefix("event-edit/").toLongOrNull()?.let { EventEdit(it) }
                 else -> null
             }
         }
@@ -100,7 +165,11 @@ object Routes {
     const val RIDE_DETAIL = "ride/{id}?new={new}"
     const val RIDE_NEW = "ride-new?event={eventId}&proxy={proxy}"
     const val EVENTS = "events"
+    const val EVENT_NEW = "event-new"
     const val EVENT_DETAIL = "event/{id}"
+
+    fun eventEdit(id: Long) = "event-edit/$id"
+    fun eventNew(duplicateId: Long? = null) = if (duplicateId != null) "$EVENT_NEW?duplicate=$duplicateId" else EVENT_NEW
     const val COSTS = "costs"
     const val HISTORY = "history"
     const val PROFILE = "profile"
@@ -110,10 +179,60 @@ object Routes {
     const val SECURITY_SETTINGS = "security-settings"
     const val DRIVER_SETTINGS = "driver-settings"
     const val PROXY_RIDERS = "proxy-riders"
+    const val FAMILY = "family"
     const val SAVED_ADDRESSES = "saved-addresses"
+    const val TERMS_PUBLIC = "terms-public"
+    const val LICENSES = "licenses"
+
+    fun invite(token: String) = "invite/${encodeQueryComponent(token)}"
+    fun visit(token: String) = "visit/${encodeQueryComponent(token)}"
+    fun carePass(token: String) = "care/${encodeQueryComponent(token)}"
     const val NOTIFICATIONS = "notifications"
     const val DRIVE_HUB = "drive"
+    const val TRAFFIC = "traffic"
+    const val PLAN_TRANSPORT = "plan-transport/{eventId}"
     const val STUDIO = "studio?shape={shape}&color={color}&face={face}"
+    const val ADMIN_MEMBERS = "admin-members"
+    const val ANNOUNCEMENTS = "announcements"
+
+    fun adminMembers(tab: String = "members", status: String? = null): String = buildString {
+        append(ADMIN_MEMBERS)
+        val params = mutableListOf<String>()
+        if (tab != "members") params.add("tab=${encodeQueryComponent(tab)}")
+        if (!status.isNullOrBlank()) params.add("status=${encodeQueryComponent(status)}")
+        if (params.isNotEmpty()) {
+            append("?")
+            append(params.joinToString("&"))
+        }
+    }
+
+    fun announcements(manage: Boolean = false): String =
+        if (manage) "$ANNOUNCEMENTS?manage=1" else ANNOUNCEMENTS
+
+    fun traffic(
+        tab: String = "plans",
+        view: String = "rides",
+        areaTab: String = "photos",
+        status: String? = null,
+        attention: Boolean = false,
+    ): String = buildString {
+        append("traffic")
+        val params = mutableListOf<String>()
+        if (tab != "plans") params.add("tab=${encodeQueryComponent(tab)}")
+        if (view != "rides") params.add("view=${encodeQueryComponent(view)}")
+        if (areaTab != "photos") params.add("areaTab=${encodeQueryComponent(areaTab)}")
+        if (!status.isNullOrBlank()) params.add("status=${encodeQueryComponent(status)}")
+        if (attention) params.add("attention=1")
+        if (params.isNotEmpty()) {
+            append("?")
+            append(params.joinToString("&"))
+        }
+    }
+
+    fun planTransport(eventId: Long, draftId: Long? = null): String = buildString {
+        append("plan-transport/$eventId")
+        if (draftId != null) append("?draftId=$draftId")
+    }
 
     fun studio(shape: String? = null, color: String? = null, face: String? = null): String = buildString {
         append("studio")
@@ -129,10 +248,12 @@ object Routes {
 
     fun rideDetail(id: Long, justBooked: Boolean = false) =
         if (justBooked) "ride/$id?new=1" else "ride/$id"
-    fun eventDetail(id: Long, checkinCode: String? = null): String = buildString {
+    fun eventDetail(id: Long, checkinCode: String? = null, openCheckin: Boolean = false): String = buildString {
         append("event/$id")
         if (!checkinCode.isNullOrBlank()) {
             append("?code=${encodeQueryComponent(checkinCode)}")
+        } else if (openCheckin) {
+            append("?checkin=1")
         }
     }
     fun rideNew(eventId: Long? = null, proxy: Boolean = false) = buildString {
@@ -146,10 +267,11 @@ object Routes {
         }
     }
 
-    val tabs = setOf(HOME, EVENTS, PROFILE)
+    val tabs = setOf(HOME, EVENTS, TRAFFIC, PROFILE)
     val tabClasses: Set<String> = setOf(
         AppRoute.Home::class.qualifiedName!!,
         AppRoute.Events::class.qualifiedName!!,
+        AppRoute.TrafficHub::class.qualifiedName!!,
         AppRoute.Profile::class.qualifiedName!!,
     )
     val authClasses: Set<String> = setOf(
@@ -158,6 +280,13 @@ object Routes {
         AppRoute.Pending::class.qualifiedName!!,
         AppRoute.Terms::class.qualifiedName!!,
     )
+    val publicClasses: Set<String> = setOf(
+        AppRoute.Invite::class.qualifiedName!!,
+        AppRoute.Visit::class.qualifiedName!!,
+        AppRoute.CarePass::class.qualifiedName!!,
+        AppRoute.TermsPublic::class.qualifiedName!!,
+        AppRoute.Licenses::class.qualifiedName!!,
+    )
 
     fun isPermitted(route: AppRoute, me: org.pjstatecm.graceride.data.api.Me): Boolean = when (route) {
         AppRoute.DriveHub, AppRoute.DriverSettings -> me.can("drive")
@@ -165,9 +294,36 @@ object Routes {
         is AppRoute.RideNew -> me.can("rides", "create")
         AppRoute.Costs -> me.can("costs")
         AppRoute.Events -> me.can("events")
+        is AppRoute.EventNew -> me.can("events", "create")
+        is AppRoute.EventEdit -> me.can("events", "update") || me.can("admin_events", "update")
         is AppRoute.EventDetail -> me.can("events") || me.can("admin_events")
+        is AppRoute.TrafficHub -> when (route.tab) {
+            "rides" -> me.can("admin_rides")
+            "live" -> me.can("admin_live")
+            "areas" -> me.can("admin_area_photos") || me.can("admin_areas") || me.can("admin_fares")
+            else -> canTrafficHub(me)
+        }
+        is AppRoute.PlanTransport -> me.can("admin_plan")
+        is AppRoute.AdminMembers -> when (route.tab) {
+            "invites" -> me.can("admin_invites")
+            "recovery" -> me.can("admin_recovery")
+            else -> canAdminMembers(me)
+        }
+        is AppRoute.Announcements -> if (route.manage) me.can("admin_announcements") else true
         else -> true
     }
+
+    /** True when the account has permission for at least one Traffic Hub tab. */
+    fun canTrafficHub(me: org.pjstatecm.graceride.data.api.Me): Boolean =
+        trafficHubPerms.any { me.can(it) }
+
+    /** True when the account can access native Members, Invites, or Recovery management. */
+    fun canAdminMembers(me: org.pjstatecm.graceride.data.api.Me): Boolean =
+        me.can("admin_members") || me.can("admin_invites") || me.can("admin_recovery")
+
+    /** True when the account can access Announcement administration. */
+    fun canManageAnnouncements(me: org.pjstatecm.graceride.data.api.Me): Boolean =
+        me.can("admin_announcements")
 
     fun isLegacyRoutePermitted(legacyRoute: String, me: org.pjstatecm.graceride.data.api.Me): Boolean {
         val typed = AppRoute.fromLegacyRoute(legacyRoute) ?: return true

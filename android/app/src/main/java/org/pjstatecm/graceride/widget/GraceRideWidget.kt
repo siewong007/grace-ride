@@ -3,6 +3,7 @@ package org.pjstatecm.graceride.widget
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.edit
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -32,15 +33,19 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.color.ColorProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
+import org.pjstatecm.graceride.GraceRideApp
 import org.pjstatecm.graceride.MainActivity
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.notifications.NotificationHelper
 import org.pjstatecm.graceride.notifications.ReadinessActionReceiver
+import java.util.Locale
 
 @Serializable
 data class WidgetSummary(
@@ -63,9 +68,9 @@ object WidgetSnapshotStore {
     fun saveSummary(context: Context, summary: WidgetSummary) {
         val raw = apiJson.encodeToString(WidgetSummary.serializer(), summary)
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_SUMMARY, raw)
-            .apply()
+            .edit {
+                putString(KEY_SUMMARY, raw)
+            }
     }
 
     fun saveFromHome(
@@ -79,11 +84,18 @@ object WidgetSnapshotStore {
             clear(context)
             return
         }
+        val lang = (context.applicationContext as? GraceRideApp)?.container?.lang
+        val ctx = NotificationHelper.localizedContext(context, lang)
+        val locale = when (lang) {
+            "zh" -> Locale.SIMPLIFIED_CHINESE
+            "en" -> Locale.ENGLISH
+            else -> Locale.getDefault()
+        }
         val summary = when {
             nextRide != null -> {
-                val timeLabel = KlTime.display(nextRide.pickupAt)
+                val timeLabel = KlTime.display(nextRide.pickupAt, locale)
                 val dest = if (hideLockDetails) {
-                    context.getString(R.string.widget_next_ride)
+                    ctx.getString(R.string.widget_next_ride)
                 } else {
                     nextRide.event?.title ?: nextRide.destination.ifBlank { nextRide.area.name }
                 }
@@ -92,9 +104,9 @@ object WidgetSnapshotStore {
                     isRide = true,
                     rideId = nextRide.id,
                     scheduledAt = nextRide.pickupAt,
-                    badge = context.getString(R.string.widget_next_ride),
+                    badge = ctx.getString(R.string.widget_next_ride),
                     title = dest,
-                    subtitle = if (hideLockDetails) timeLabel else "$timeLabel · ${nextRide.statusLabel()}",
+                    subtitle = if (hideLockDetails) timeLabel else "$timeLabel · ${nextRide.statusLabel(ctx)}",
                     showReadyButton = !hideLockDetails &&
                         nextRide.viewer.isPassenger &&
                         nextRide.status == "confirmed" &&
@@ -108,12 +120,12 @@ object WidgetSnapshotStore {
                     isRide = false,
                     eventId = nextEvent.id,
                     scheduledAt = nextEvent.startsAt,
-                    badge = context.getString(R.string.widget_next_event),
-                    title = if (hideLockDetails) context.getString(R.string.widget_next_event) else nextEvent.title,
+                    badge = ctx.getString(R.string.widget_next_event),
+                    title = if (hideLockDetails) ctx.getString(R.string.widget_next_event) else nextEvent.title,
                     subtitle = if (hideLockDetails) {
-                        KlTime.display(nextEvent.startsAt)
+                        KlTime.display(nextEvent.startsAt, locale)
                     } else {
-                        "${KlTime.display(nextEvent.startsAt)} · ${nextEvent.location}"
+                        "${KlTime.display(nextEvent.startsAt, locale)} · ${nextEvent.location}"
                     },
                 )
             }
@@ -150,15 +162,19 @@ object WidgetSnapshotStore {
 
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .remove(KEY_SUMMARY)
-            .apply()
+            .edit {
+                remove(KEY_SUMMARY)
+            }
     }
 
-    private fun Ride.statusLabel(): String = when (status) {
-        "confirmed" -> driver?.name?.let { "Driver: $it" } ?: "Confirmed"
-        "in_progress" -> "On the way"
-        else -> status.replaceFirstChar { it.uppercase() }
+    private fun Ride.statusLabel(ctx: Context): String {
+        val base = ctx.getString(RideStatus.labelRes(status))
+        val driverName = driver?.name?.trim()?.takeIf { it.isNotEmpty() }
+        return if (status == "confirmed" && driverName != null) {
+            "$base · $driverName"
+        } else {
+            base
+        }
     }
 }
 
@@ -166,24 +182,29 @@ class GraceRideWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val summary = WidgetSnapshotStore.freshForDisplay(WidgetSnapshotStore.load(context))
+        val lang = (context.applicationContext as? GraceRideApp)?.container?.lang
+        val ctx = NotificationHelper.localizedContext(context, lang)
         provideContent {
             GlanceTheme {
-                WidgetContent(context, summary)
+                WidgetContent(context, ctx, summary)
             }
         }
     }
 
     @Composable
-    private fun WidgetContent(context: Context, summary: WidgetSummary) {
+    private fun WidgetContent(baseContext: Context, ctx: Context, summary: WidgetSummary) {
         val openLink = when {
+            !summary.signedIn -> null
             summary.rideId != null -> "/rides/${summary.rideId}"
             summary.eventId != null -> "/events/${summary.eventId}"
             else -> "/rides"
         }
-        val launchIntent = Intent(context, MainActivity::class.java).apply {
+        val launchIntent = Intent(baseContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(NotificationHelper.EXTRA_NOTIF_LINK, openLink)
-            putExtra(NotificationHelper.EXTRA_NOTIF_TOKEN, NotificationHelper.internalToken(context))
+            if (openLink != null) {
+                putExtra(NotificationHelper.EXTRA_NOTIF_LINK, openLink)
+                putExtra(NotificationHelper.EXTRA_NOTIF_TOKEN, NotificationHelper.internalToken(baseContext))
+            }
         }
         val cardBg = ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFF141517))
         val inkPrimary = ColorProvider(day = Color(0xFF1A1A1A), night = Color(0xFFEDEDED))
@@ -204,22 +225,22 @@ class GraceRideWidget : GlanceAppWidget() {
         ) {
             if (!summary.signedIn) {
                 Text(
-                    text = context.getString(R.string.app_name),
+                    text = ctx.getString(R.string.app_name),
                     style = TextStyle(color = inkPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold),
                 )
                 Spacer(GlanceModifier.height(4.dp))
                 Text(
-                    text = context.getString(R.string.widget_signed_out),
+                    text = ctx.getString(R.string.widget_signed_out),
                     style = TextStyle(color = inkSecondary, fontSize = 13.sp),
                 )
             } else if (summary.title.isBlank()) {
                 Text(
-                    text = context.getString(R.string.widget_empty_title),
+                    text = ctx.getString(R.string.widget_empty_title),
                     style = TextStyle(color = inkPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold),
                 )
                 Spacer(GlanceModifier.height(4.dp))
                 Text(
-                    text = context.getString(R.string.widget_empty_sub),
+                    text = ctx.getString(R.string.widget_empty_sub),
                     style = TextStyle(color = inkSecondary, fontSize = 13.sp),
                 )
             } else {
@@ -237,7 +258,7 @@ class GraceRideWidget : GlanceAppWidget() {
                     )
                     Spacer(GlanceModifier.width(8.dp))
                     Text(
-                        text = context.getString(R.string.app_name),
+                        text = ctx.getString(R.string.app_name),
                         style = TextStyle(color = inkSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium),
                     )
                 }
@@ -258,13 +279,13 @@ class GraceRideWidget : GlanceAppWidget() {
                 if (summary.showReadyButton && summary.rideId != null) {
                     Spacer(GlanceModifier.height(8.dp))
                     val readyIntent = ReadinessActionReceiver.createIntent(
-                        context = context,
+                        context = baseContext,
                         rideId = summary.rideId,
                         status = "ready",
                         notifId = 0,
                     )
                     Text(
-                        text = context.getString(R.string.widget_action_ready),
+                        text = ctx.getString(R.string.widget_action_ready),
                         style = TextStyle(color = ctaText, fontSize = 12.sp, fontWeight = FontWeight.Bold),
                         modifier = GlanceModifier
                             .background(ctaBg)
@@ -287,5 +308,10 @@ class GraceRideWidgetReceiver : GlanceAppWidgetReceiver() {
 }
 
 suspend fun refreshGraceRideWidget(context: Context) {
-    runCatching { GraceRideWidget().updateAll(context) }
+    try {
+        GraceRideWidget().updateAll(context)
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (_: Exception) {
+    }
 }

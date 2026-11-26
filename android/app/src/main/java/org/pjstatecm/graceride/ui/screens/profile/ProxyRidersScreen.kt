@@ -86,7 +86,8 @@ fun ProxyRidersScreen(container: AppContainer, nav: NavHostController) {
     val vm: ProxyRidersViewModel = viewModel(factory = ProxyRidersViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    val me = container.auth.me
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val canCreate = me?.can("rides", "create") == true
     val canUpdate = me?.can("rides", "update") == true
     val canDelete = me?.can("rides", "delete") == true

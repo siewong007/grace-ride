@@ -91,10 +91,24 @@ import org.pjstatecm.graceride.ui.theme.tabular
 fun CostsScreen(container: AppContainer, nav: NavHostController) {
     val vm: CostsViewModel = viewModel(factory = CostsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val context = LocalContext.current
     val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
     val doneMsg = stringResource(R.string.costs_submitted)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var resumedOnce by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (resumedOnce) vm.refresh() else resumedOnce = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         vm.setProof(uri)
@@ -133,7 +147,7 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
         ) { mode ->
             when (mode) {
                 "loading" -> SkeletonLoadingList(count = 3)
-                "error" -> ErrorView(state.error ?: "", vm::refresh)
+                "error" -> ErrorView(state.error ?: "", onRetry = vm::refresh)
                 else -> Column(Modifier.fillMaxSize()) {
                     AnimatedOfflineBanner(
                         visible = state.offline,
@@ -203,7 +217,7 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
                             items(state.shares, key = { it.id }) { share ->
                                 ShareCard(
                                     share,
-                                    canPay = container.auth.me?.can("costs", "update") == true,
+                                    canPay = me?.can("costs", "update") == true,
                                     onPay = { vm.openPay(share) },
                                     modifier = Modifier.animateItem(),
                                 )
@@ -217,9 +231,13 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
 
     val paying = state.paying
     if (paying != null) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val canDismissSheet by androidx.compose.runtime.rememberUpdatedState(!state.submitting)
+        val sheetState = rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            confirmValueChange = { canDismissSheet },
+        )
         var accountCopied by remember(paying.id) { mutableStateOf(false) }
-        ModalBottomSheet(onDismissRequest = { vm.closePay() }, sheetState = sheetState) {
+        ModalBottomSheet(onDismissRequest = { if (!state.submitting) vm.closePay() }, sheetState = sheetState) {
             Column(
                 Modifier
                     .fillMaxWidth()

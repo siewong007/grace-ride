@@ -106,10 +106,37 @@ class PersistentCookieJar(
         list.any { it.expiresAt > now }
     }
 
+    /** True when any non-visitor member session cookie is still unexpired. */
+    fun hasMemberCookies(): Boolean = synchronized(lock) {
+        val list = ensureLoadedLocked()
+        val now = System.currentTimeMillis()
+        list.any { it.expiresAt > now && !it.path.startsWith("/api/visit") }
+    }
+
     fun clear() {
         synchronized(lock) {
             cache = mutableListOf()
             store.remove(key)
+        }
+    }
+
+    /**
+     * Drops member session cookies while preserving visitor-pass cookies scoped to `/api/visit`,
+     * so passive member 401 checks never break an active guest ride view.
+     */
+    fun clearMemberCookies() {
+        synchronized(lock) {
+            val list = ensureLoadedLocked()
+            val now = System.currentTimeMillis()
+            val kept = list.filter { c ->
+                c.expiresAt > now && c.path.startsWith("/api/visit")
+            }.toMutableList()
+            cache = kept
+            if (kept.isEmpty()) {
+                store.remove(key)
+            } else {
+                persist(kept)
+            }
         }
     }
 

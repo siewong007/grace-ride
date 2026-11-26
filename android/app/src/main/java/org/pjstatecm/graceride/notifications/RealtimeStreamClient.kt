@@ -5,6 +5,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,7 +90,8 @@ class RealtimeStreamClient(
 
     private val sseClient: OkHttpClient by lazy {
         okHttp.newBuilder()
-            .readTimeout(0, TimeUnit.SECONDS)
+            .cache(null)
+            .readTimeout(45, TimeUnit.SECONDS)
             .build()
     }
 
@@ -109,7 +111,8 @@ class RealtimeStreamClient(
         if (appContext == null) return
         if (!started.compareAndSet(false, true)) return
 
-        scope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main.immediate) {
+            if (!started.get()) return@launch
             val lifecycle = ProcessLifecycleOwner.get().lifecycle
             isForeground.value = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
             lifecycle.addObserver(lifecycleObserver)
@@ -154,6 +157,7 @@ class RealtimeStreamClient(
         supervisorJob = null
         if (started.compareAndSet(true, false) && appContext != null) {
             scope.launch(Dispatchers.Main.immediate) {
+                if (started.get()) return@launch
                 ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
             }
         }
@@ -207,13 +211,19 @@ class RealtimeStreamClient(
                         when (response?.code) {
                             401 -> {
                                 terminalAuthStatus = true
-                                auth.onUnauthorized()
-                                authEvents?.emit(AuthEvent.Unauthorized)
+                                if (authEvents != null) {
+                                    authEvents.emit(AuthEvent.Unauthorized)
+                                } else {
+                                    auth.onUnauthorized()
+                                }
                             }
                             423 -> {
                                 terminalAuthStatus = true
-                                auth.onLocked()
-                                authEvents?.emit(AuthEvent.Locked)
+                                if (authEvents != null) {
+                                    authEvents.emit(AuthEvent.Locked)
+                                } else {
+                                    auth.onLocked()
+                                }
                             }
                         }
                         closedSignal.complete(Unit)
@@ -252,6 +262,8 @@ class RealtimeStreamClient(
                 )
                 lastSeenNotifId = result.newWatermark
                 baselineInitialized = true
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 // Ignore transient errors during SSE background sync.
             }
@@ -264,6 +276,8 @@ class RealtimeStreamClient(
     )
 
     companion object {
+        private val globalSyncMutex = Mutex()
+
         fun watermarkKey(userId: Long): String = "notif_last_seen_id_$userId"
 
         fun readWatermark(store: SecureStore?, userId: Long): Long? =
@@ -344,14 +358,14 @@ class RealtimeStreamClient(
             hideLockDetails: Boolean = false,
             prefs: org.pjstatecm.graceride.data.api.NotificationPrefsDto? = readCachedPrefs(store),
             passive: Boolean = false,
-        ): SyncResult {
-            val page = community.notificationsPage(limit = 5, passive = passive)
+        ): SyncResult = globalSyncMutex.withLock {
+            val page = community.notificationsPage(limit = 15, passive = passive)
             auth.updateUnread(page.unread)
             val maxId = page.items.maxOfOrNull { it.id } ?: 0L
             val existing = readWatermark(store, userId) ?: inMemoryLastSeenId
             if (existing == null) {
                 writeWatermark(store, userId, maxId)
-                return SyncResult(newWatermark = maxId, surfaced = emptyList())
+                return@withLock SyncResult(newWatermark = maxId, surfaced = emptyList())
             }
             val effectiveHideLock = hideLockDetails || (prefs?.hideLockDetails == true)
             val newlySurfaced = if (surfaceNew && maxId > existing) {
@@ -370,12 +384,20 @@ class RealtimeStreamClient(
                         hideLockDetails = effectiveHideLock,
                     )
                 }
+                if (newlySurfaced.size >= 2) {
+                    NotificationHelper.showGroupSummary(
+                        appContext,
+                        newlySurfaced,
+                        lang = lang,
+                        hideLockDetails = effectiveHideLock,
+                    )
+                }
             }
             val nextWatermark = maxOf(existing, maxId)
             if (nextWatermark > existing) {
                 writeWatermark(store, userId, nextWatermark)
             }
-            return SyncResult(newWatermark = nextWatermark, surfaced = newlySurfaced)
+            SyncResult(newWatermark = nextWatermark, surfaced = newlySurfaced)
         }
     }
 }

@@ -25,7 +25,7 @@ class NetworkMonitor(context: Context?) {
         }
 
         override fun onLost(network: Network) {
-            _isOnline.value = false
+            _isOnline.value = computeOnline(losingNetwork = network)
         }
 
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
@@ -40,9 +40,10 @@ class NetworkMonitor(context: Context?) {
         }
     }
 
-    private fun computeOnline(): Boolean {
+    private fun computeOnline(losingNetwork: Network? = null): Boolean {
         val manager = cm ?: return true
         val active = manager.activeNetwork ?: return false
+        if (losingNetwork != null && active == losingNetwork) return false
         val caps = manager.getNetworkCapabilities(active) ?: return false
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)

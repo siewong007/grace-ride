@@ -33,11 +33,14 @@ import androidx.navigation.NavHostController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.notifications.RealtimeEvent
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
@@ -59,7 +62,17 @@ class HistoryViewModel(private val container: AppContainer) : ViewModel() {
     val state: StateFlow<HistoryUiState> = _state.asStateFlow()
     private var loadJob: kotlinx.coroutines.Job? = null
 
-    init { load(first = true) }
+    init {
+        load(first = true)
+        viewModelScope.launch {
+            container.realtimeStream.events.collect { ev ->
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) refresh()
+            }
+        }
+        viewModelScope.launch {
+            container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
+    }
 
     fun refresh() = load(first = false)
 
@@ -93,6 +106,18 @@ class HistoryViewModel(private val container: AppContainer) : ViewModel() {
 fun HistoryScreen(container: AppContainer, nav: NavHostController) {
     val vm: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val resumedOnce = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (resumedOnce.value) vm.refresh() else resumedOnce.value = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     Scaffold(
         topBar = {
@@ -119,7 +144,7 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
         ) { mode ->
             when (mode) {
                 "loading" -> SkeletonLoadingList(count = 4)
-                "error" -> ErrorView(state.error ?: "", vm::refresh)
+                "error" -> ErrorView(state.error ?: "", onRetry = vm::refresh)
                 else -> Column(Modifier.fillMaxSize()) {
                     AnimatedOfflineBanner(
                         visible = state.offline,

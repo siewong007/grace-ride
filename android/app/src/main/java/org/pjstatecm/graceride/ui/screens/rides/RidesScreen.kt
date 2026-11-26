@@ -1,6 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.rides
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -31,6 +32,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,6 +69,8 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 fun RidesScreen(container: AppContainer, nav: NavHostController) {
     val vm: RidesViewModel = viewModel(factory = RidesViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumedOnce by remember { mutableStateOf(false) }
@@ -93,12 +97,16 @@ fun RidesScreen(container: AppContainer, nav: NavHostController) {
             )
         },
         floatingActionButton = {
-            if (state.tab == 0 && container.auth.me?.can("rides", "create") == true) {
+            if (state.tab == 0 && me?.can("rides", "create") == true) {
                 val bookLabel = stringResource(R.string.rides_book)
                 ExtendedFloatingActionButton(
                     onClick = {
-                        nav.popBackStack()
-                        nav.navigateTab(AppRoute.Events)
+                        if (me.can("events", "view")) {
+                            nav.popBackStack()
+                            nav.navigateTab(AppRoute.Events)
+                        } else {
+                            nav.navigate(AppRoute.RideNew())
+                        }
                     },
                     containerColor = GrPrimary,
                     contentColor = Color.White,
@@ -118,19 +126,15 @@ fun RidesScreen(container: AppContainer, nav: NavHostController) {
                 visible = !state.loading && state.offline,
                 modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
             )
-            val viewMode = when {
-                state.loading -> "loading"
-                state.error != null && state.rides.isEmpty() -> "error"
-                else -> "tab-${state.tab}"
+            val tabSnapshots = remember { mutableStateMapOf<Int, RidesUiState>() }
+            if (!state.loading) {
+                tabSnapshots[state.tab] = state
             }
             AnimatedContent(
-                targetState = viewMode,
+                targetState = state.tab,
                 transitionSpec = {
-                    val tabTransition = initialState.startsWith("tab-") && targetState.startsWith("tab-")
-                    if (tabTransition && animatorsEnabled()) {
-                        val fromTab = initialState.removePrefix("tab-").toIntOrNull() ?: 0
-                        val toTab = targetState.removePrefix("tab-").toIntOrNull() ?: 0
-                        val dir = if (toTab > fromTab) 1 else -1
+                    if (animatorsEnabled()) {
+                        val dir = if (targetState > initialState) 1 else -1
                         (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
                             fadeIn(tween(180)))
                             .togetherWith(
@@ -138,37 +142,49 @@ fun RidesScreen(container: AppContainer, nav: NavHostController) {
                                     fadeOut(tween(140)),
                             )
                     } else {
-                        fadeIn(tween(180)).togetherWith(fadeOut(tween(140)))
+                        fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
                     }
                 },
                 label = "rides_state",
                 modifier = Modifier.weight(1f),
-            ) { mode ->
-                when (mode) {
-                    "loading" -> SkeletonLoadingList(count = 4)
-                    "error" -> ErrorView(state.error ?: "", vm::refresh)
-                    else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
-                        val isUpcomingTab = mode == "tab-0"
-                        LazyColumn(
-                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            contentPadding = PaddingValues(top = Spacing.xs, bottom = if (isUpcomingTab) 88.dp else Spacing.xs),
-                        ) {
-                            if (state.rides.isEmpty()) {
-                                item {
-                                    EmptyView(
-                                        text = stringResource(R.string.rides_empty),
-                                        icon = Icons.Outlined.DirectionsCar,
+            ) { tab ->
+                val tabState = if (tab == state.tab) state else (tabSnapshots[tab] ?: state)
+                val innerMode = when {
+                    tabState.loading -> "loading"
+                    tabState.error != null && tabState.rides.isEmpty() -> "error"
+                    else -> "content"
+                }
+                Crossfade(
+                    targetState = innerMode,
+                    animationSpec = tween(180),
+                    label = "rides_tab_state_$tab",
+                ) { mode ->
+                    when (mode) {
+                        "loading" -> SkeletonLoadingList(count = 4)
+                        "error" -> ErrorView(tabState.error ?: "", onRetry = vm::refresh)
+                        else -> PullToRefreshBox(isRefreshing = tabState.refreshing, onRefresh = vm::refresh) {
+                            val isUpcomingTab = tab == 0
+                            LazyColumn(
+                                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                contentPadding = PaddingValues(top = Spacing.xs, bottom = if (isUpcomingTab) 88.dp else Spacing.xs),
+                            ) {
+                                if (tabState.rides.isEmpty()) {
+                                    item {
+                                        EmptyView(
+                                            text = stringResource(R.string.rides_empty),
+                                            icon = Icons.Outlined.DirectionsCar,
+                                        )
+                                    }
+                                }
+                                items(tabState.rides, key = { it.id }) { ride ->
+                                    RideCard(
+                                        ride,
+                                        photoUrlFor = container::fileUrl,
+                                        onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                        modifier = Modifier.animateItem(),
                                     )
                                 }
-                            }
-                            items(state.rides, key = { it.id }) { ride ->
-                                RideCard(
-                                    ride,
-                                    photoUrlFor = container::fileUrl,
-                                    onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
-                                    modifier = Modifier.animateItem(),
-                                )
                             }
                         }
                     }

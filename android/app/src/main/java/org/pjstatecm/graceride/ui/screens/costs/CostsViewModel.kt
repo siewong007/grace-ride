@@ -7,11 +7,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.pjstatecm.graceride.R
@@ -19,6 +22,7 @@ import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Share
 import org.pjstatecm.graceride.data.media.prepareImageUpload
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.notifications.RealtimeEvent
 
 data class CostsUiState(
     val loading: Boolean = true,
@@ -31,7 +35,7 @@ data class CostsUiState(
     val txnRef: String = "",
     val submitting: Boolean = false,
     val sheetError: String? = null,
-    @StringRes val sheetErrorRes: Int? = null,
+    @param:StringRes @get:StringRes val sheetErrorRes: Int? = null,
     val doneMessage: String? = null,
 )
 
@@ -42,7 +46,17 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     private var uploadedForUri: Uri? = null
     private var uploadedFileId: Long? = null
 
-    init { load(first = true) }
+    init {
+        load(first = true)
+        viewModelScope.launch {
+            container.realtimeStream.events.collect { ev ->
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) refresh()
+            }
+        }
+        viewModelScope.launch {
+            container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
+    }
 
     fun refresh() = load(first = false)
 
@@ -68,6 +82,7 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun openPay(share: Share) {
+        if (_state.value.submitting) return
         uploadedForUri = null
         uploadedFileId = null
         _state.value = _state.value.copy(
@@ -80,6 +95,7 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun closePay() {
+        if (_state.value.submitting) return
         uploadedForUri = null
         uploadedFileId = null
         _state.value = _state.value.copy(paying = null, sheetError = null, sheetErrorRes = null)
@@ -136,6 +152,8 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
                             )
                         } catch (e: org.pjstatecm.graceride.data.media.FileTooLargeException) {
                             throw IllegalStateException(context.getString(R.string.costs_err_file_too_large), e)
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             throw IllegalStateException(context.getString(R.string.costs_err_unreadable), e)
                         }
@@ -148,10 +166,17 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
                 container.shares.submitProof(share.id, fileId, cleanRef)
                 uploadedForUri = null
                 uploadedFileId = null
-                _state.value = _state.value.copy(submitting = false, paying = null, doneMessage = "ok")
+                if (_state.value.paying?.id == share.id) {
+                    _state.value = _state.value.copy(submitting = false, paying = null, doneMessage = "ok")
+                } else {
+                    _state.value = _state.value.copy(submitting = false, doneMessage = "ok")
+                }
                 load(first = false)
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(submitting = false, sheetError = e.message, sheetErrorRes = null)
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(submitting = false)
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     submitting = false,

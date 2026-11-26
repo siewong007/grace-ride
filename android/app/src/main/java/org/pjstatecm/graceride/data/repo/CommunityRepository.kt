@@ -8,22 +8,51 @@ import org.pjstatecm.graceride.data.api.Announcement
 import org.pjstatecm.graceride.data.api.ApiProvider
 import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
+import org.pjstatecm.graceride.data.api.CalendarFeedDto
+import org.pjstatecm.graceride.data.api.CalendarFeedRotateDto
+import org.pjstatecm.graceride.data.api.CreateAnnouncementReq
+import org.pjstatecm.graceride.data.api.FamilyAddPersonRespDto
+import org.pjstatecm.graceride.data.api.FamilyCreateRespDto
+import org.pjstatecm.graceride.data.api.FamilyNameReq
+import org.pjstatecm.graceride.data.api.FamilyPhoneReq
+import org.pjstatecm.graceride.data.api.FamilyStateDto
 import org.pjstatecm.graceride.data.api.FileRef
+import org.pjstatecm.graceride.data.api.GroupDto
+import org.pjstatecm.graceride.data.api.IdRespDto
 import org.pjstatecm.graceride.data.api.MobilePushTokenDel
 import org.pjstatecm.graceride.data.api.MobilePushTokenReq
 import org.pjstatecm.graceride.data.api.NotificationActionResp
 import org.pjstatecm.graceride.data.api.NotificationItem
 import org.pjstatecm.graceride.data.api.NotificationPageDto
 import org.pjstatecm.graceride.data.api.NotificationPrefsDto
+import org.pjstatecm.graceride.data.api.OkResponse
 import org.pjstatecm.graceride.data.api.ProfileUpdateReq
+import org.pjstatecm.graceride.data.api.PushConfigDto
+import org.pjstatecm.graceride.data.api.PushSubscriptionsDto
+import org.pjstatecm.graceride.data.api.PushTestRespDto
 import org.pjstatecm.graceride.data.api.ReadAllReq
+import org.pjstatecm.graceride.data.api.TelegramLinkTokenDto
+import org.pjstatecm.graceride.data.api.TelegramTestRespDto
+import org.pjstatecm.graceride.data.api.UpdateAnnouncementReq
 import org.pjstatecm.graceride.data.api.UpdateNotificationPrefsReq
 import org.pjstatecm.graceride.data.api.apiCall
 import java.io.File
 
 class CommunityRepository(private val apiProvider: ApiProvider, private val bus: AuthEventBus) {
     private val api: ApiService get() = apiProvider.get()
-    suspend fun announcements(): List<Announcement> = apiCall(bus) { api.announcements() }
+    suspend fun announcements(manage: Boolean? = null): List<Announcement> =
+        apiCall(bus) { api.announcements(manage = manage) }
+
+    suspend fun createAnnouncement(req: CreateAnnouncementReq): IdRespDto =
+        apiCall(bus) { api.createAnnouncement(req) }
+
+    suspend fun updateAnnouncement(id: Long, req: UpdateAnnouncementReq): OkResponse =
+        apiCall(bus) { api.updateAnnouncement(id, req) }
+
+    suspend fun deleteAnnouncement(id: Long): OkResponse =
+        apiCall(bus) { api.deleteAnnouncement(id) }
+
+    suspend fun groups(): List<GroupDto> = apiCall(bus) { api.groups() }
 
     suspend fun notificationsPage(
         before: Long? = null,
@@ -84,4 +113,38 @@ class CommunityRepository(private val apiProvider: ApiProvider, private val bus:
     suspend fun deletePasskey(id: Long) = apiCall(bus) { api.deletePasskey(id) }
     suspend fun biometrics() = apiCall(bus) { api.biometrics() }
     suspend fun deleteBiometric(id: Long) = apiCall(bus) { api.deleteBiometric(id) }
+
+    // ---- Calendar Feed ----
+    suspend fun calendarFeed(): CalendarFeedDto = apiCall(bus) { api.calendarFeed() }
+    suspend fun rotateCalendarFeed(): CalendarFeedRotateDto = apiCall(bus) { api.rotateCalendarFeed() }
+    suspend fun revokeCalendarFeed(): OkResponse = apiCall(bus) { api.revokeCalendarFeed() }
+
+    // ---- Push Devices & Telegram ----
+    suspend fun pushConfig(): PushConfigDto = apiCall(bus) { api.pushConfig() }
+    suspend fun pushSubscriptions(): PushSubscriptionsDto = apiCall(bus) { api.pushSubscriptions() }
+    suspend fun deletePushSubscription(id: Long): OkResponse = apiCall(bus) { api.deletePushSubscription(id) }
+    suspend fun pushTest(): PushTestRespDto = apiCall(bus) { api.pushTest() }
+    suspend fun telegramLinkToken(): TelegramLinkTokenDto = apiCall(bus) { api.telegramLinkToken() }
+    suspend fun telegramTest(): TelegramTestRespDto = apiCall(bus) { api.telegramTest() }
+
+    // ---- Family Circle ----
+    suspend fun family(): FamilyStateDto = apiCall(bus) { api.family() }
+    suspend fun createFamily(name: String): FamilyCreateRespDto =
+        apiCall(bus) { api.createFamily(FamilyNameReq(name.trim())) }
+    suspend fun renameFamily(name: String): OkResponse =
+        apiCall(bus) { api.renameFamily(FamilyNameReq(name.trim())) }
+    suspend fun deleteFamily(): OkResponse = apiCall(bus) { api.deleteFamily() }
+    suspend fun leaveFamily(): OkResponse = apiCall(bus) { api.leaveFamily() }
+    suspend fun addFamilyPerson(phone: String): FamilyAddPersonRespDto =
+        apiCall(bus) { api.addFamilyPerson(FamilyPhoneReq(phone.trim())) }
+    suspend fun removeFamilyMember(userId: Long): OkResponse =
+        apiCall(bus) { api.removeFamilyMember(userId) }
+    suspend fun cancelFamilyRequest(id: Long): OkResponse =
+        apiCall(bus) { api.cancelFamilyRequest(id) }
+    suspend fun acceptFamilyRequest(id: Long): OkResponse =
+        apiCall(bus) { api.acceptFamilyRequest(id) }
+    suspend fun declineFamilyRequest(id: Long): OkResponse =
+        apiCall(bus) { api.declineFamilyRequest(id) }
+    suspend fun revokeFamilyInvite(id: Long): OkResponse =
+        apiCall(bus) { api.revokeFamilyInvite(id) }
 }

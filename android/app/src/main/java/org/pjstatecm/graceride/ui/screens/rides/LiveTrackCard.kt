@@ -48,8 +48,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
-import androidx.core.os.CancellationSignal
+import android.os.CancellationSignal
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -119,10 +123,14 @@ fun LiveTrackCard(
         }
     }
 
-    LaunchedEffect(ride.id, ride.status) {
-        while (true) {
-            onRefreshLocation()
-            delay(12_000L)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentRefreshLocation by rememberUpdatedState(onRefreshLocation)
+    LaunchedEffect(ride.id, ride.status, lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                currentRefreshLocation()
+                delay(12_000L)
+            }
         }
     }
 

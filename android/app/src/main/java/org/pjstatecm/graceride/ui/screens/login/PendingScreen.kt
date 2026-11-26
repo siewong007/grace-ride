@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,7 +52,12 @@ fun PendingScreen(container: AppContainer) {
     }
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
-    val vm: UnlockViewModel = viewModel(factory = UnlockViewModel.factory(container))
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val pendingMeId = (authState as? org.pjstatecm.graceride.data.repo.AuthState.Pending)?.me?.id ?: 0L
+    val vm: UnlockViewModel = viewModel(
+        key = "pending-$pendingMeId",
+        factory = UnlockViewModel.factory(container),
+    )
 
     Column(
         Modifier

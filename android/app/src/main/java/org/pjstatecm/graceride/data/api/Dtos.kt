@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 
 object FlexibleBooleanSerializer : KSerializer<Boolean?> {
@@ -36,6 +37,32 @@ object FlexibleBooleanSerializer : KSerializer<Boolean?> {
             jsonEncoder.encodeJsonElement(if (value == null) JsonNull else JsonPrimitive(value))
         } else if (value != null) {
             encoder.encodeBoolean(value)
+        }
+    }
+}
+
+object NullableNonBlankStringSerializer : KSerializer<String?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("NullableNonBlankString", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): String? {
+        val jsonDecoder = decoder as? JsonDecoder
+        if (jsonDecoder != null) {
+            return when (val el = jsonDecoder.decodeJsonElement()) {
+                is JsonNull -> null
+                is JsonPrimitive -> el.contentOrNull?.takeIf { it.isNotBlank() }
+                else -> null
+            }
+        }
+        return decoder.decodeString().takeIf { it.isNotBlank() }
+    }
+
+    override fun serialize(encoder: Encoder, value: String?) {
+        val jsonEncoder = encoder as? JsonEncoder
+        if (jsonEncoder != null) {
+            jsonEncoder.encodeJsonElement(if (value == null) JsonNull else JsonPrimitive(value))
+        } else if (value != null) {
+            encoder.encodeString(value)
         }
     }
 }
@@ -84,6 +111,14 @@ data class Me(
 
     /** True when this account holds any staff/admin (`admin_*`) permission. */
     fun hasStaffAccess(): Boolean = permissions.any { it.startsWith("admin_") }
+
+    /** Traffic leads can approve/return plan & ride drafts and edit live visitors directly. */
+    fun canApprovePlan(): Boolean =
+        roles.any { it in setOf("traffic_head", "admin", "superadmin", "president", "vice_president") }
+
+    /** Executive / superadmin roles allowed to toggle event mileage claimability. */
+    fun canAuthoriseMileage(): Boolean =
+        roles.any { it in setOf("superadmin", "president", "vice_president") }
 }
 
 @Serializable
@@ -102,7 +137,11 @@ data class PasskeyStartReq(val email: String, val turnstile_token: String? = nul
 data class PasskeyStart(val challenge_id: String, val options: JsonObject)
 
 @Serializable
-data class PasskeyFinishReq(val challenge_id: String, val credential: kotlinx.serialization.json.JsonElement)
+data class PasskeyFinishReq(
+    val challenge_id: String,
+    val credential: kotlinx.serialization.json.JsonElement,
+    val label: String? = null,
+)
 
 @Serializable
 data class PasskeyInfo(val id: Long, val label: String = "", val created_at: String = "", val last_used: String? = null)
@@ -168,7 +207,12 @@ data class UnlockReq(
 )
 
 @Serializable
-data class Area(val id: Long, val name: String, val active: Boolean = true)
+data class Area(
+    val id: Long,
+    val name: String,
+    val active: Boolean = true,
+    @SerialName("photo_count") val photoCount: Int = 0,
+)
 
 @Serializable
 data class Place(val label: String, val lat: Double = 0.0, val lng: Double = 0.0)
@@ -276,6 +320,7 @@ data class Ride(
     @SerialName("route_fare") val routeFare: RouteFare? = null,
     @SerialName("distance_km") val distanceKm: Long? = null,
     @SerialName("reimbursement_amount_cents") val reimbursementAmountCents: Long? = null,
+    @SerialName("reimbursement_excluded") val reimbursementExcluded: Boolean = false,
     @SerialName("mileage_receipt_needed") val mileageReceiptNeeded: Boolean = false,
     @SerialName("readiness_status") val readinessStatus: String = "unconfirmed",
     @SerialName("readiness_updated_at") val readinessUpdatedAt: String? = null,
@@ -334,6 +379,9 @@ data class DriverDelayReq(val delay_minutes: Int)
 data class WithdrawReq(val reason: String? = null)
 
 @Serializable
+data class SupperChoiceReq(val choice: String)
+
+@Serializable
 data class EventCreator(val id: Long, val name: String)
 
 @Serializable
@@ -351,6 +399,12 @@ data class MySignup(
 )
 
 @Serializable
+data class EventSettlementRef(
+    val id: Long,
+    val status: String = "",
+)
+
+@Serializable
 data class EventItem(
     val id: Long,
     val title: String,
@@ -364,19 +418,25 @@ data class EventItem(
     @SerialName("signup_deadline") val signupDeadline: String? = null,
     val status: String = "published",
     @SerialName("created_by") val createdBy: EventCreator? = null,
+    @SerialName("series_id") val seriesId: String? = null,
     val going: Long = 0,
     val waitlist: Long = 0,
+    @SerialName("attended_count") val attendedCount: Long? = null,
+    @SerialName("unassigned_rides") val unassignedRides: Long? = null,
     @SerialName("spots_left") val spotsLeft: Long? = null,
     @SerialName("my_signup") val mySignup: MySignup? = null,
     @SerialName("my_ride") val myRide: EventRideRef? = null,
     @SerialName("my_return_ride") val myReturnRide: EventRideRef? = null,
     /** Display names of the target groups (a string in event_json, not an array). */
     val groups: String = "",
+    @SerialName("group_ids") val groupIds: List<Long> = emptyList(),
+    @SerialName("as_group_ids") val asGroupIds: List<Long> = emptyList(),
     @SerialName("photo_file_id") val photoFileId: Long? = null,
     @SerialName("attendance_enabled") val attendanceEnabled: Boolean = false,
     @SerialName("mileage_claimable") val mileageClaimable: Boolean = false,
     val area: RideArea? = null,
     @SerialName("checkin_code") val checkinCode: String? = null,
+    val settlement: EventSettlementRef? = null,
     @SerialName("can_manage") val canManage: Boolean = false,
     @SerialName("can_publish") val canPublish: Boolean = false,
     @SerialName("can_unpublish") val canUnpublish: Boolean = false,
@@ -391,7 +451,11 @@ data class SignupReq(
     val offer_drive: Boolean? = null,
     val offer_seats: Long? = null,
     val as_group_id: Long? = null,
+    val self_transport: Boolean? = null,
 )
+
+@Serializable
+data class EventTransportReq(val self_transport: Boolean)
 
 @Serializable
 data class Share(
@@ -430,7 +494,7 @@ data class NotificationItem(
     val id: Long,
     val title: String,
     val body: String = "",
-    val link: String? = null,
+    @Serializable(with = NullableNonBlankStringSerializer::class) val link: String? = null,
     val read: Boolean = false,
     @SerialName("created_at") val createdAt: String = "",
     val category: String = "general",
@@ -460,6 +524,8 @@ data class ReadAllReq(val category: String? = null)
 data class NotificationPrefsDto(
     @SerialName("push_opt_in") val pushOptIn: Boolean = true,
     @SerialName("whatsapp_opt_in") val whatsappOptIn: Boolean = false,
+    @SerialName("telegram_chat_id") val telegramChatId: String = "",
+    @SerialName("telegram_blocked") val telegramBlocked: Boolean = false,
     @SerialName("readiness_prompt_mins") val readinessPromptMins: Int = 45,
     @SerialName("driver_remind_mins") val driverRemindMins: Int = 60,
     @SerialName("muted_categories") val mutedCategories: List<String> = emptyList(),
@@ -472,6 +538,7 @@ data class NotificationPrefsDto(
 data class UpdateNotificationPrefsReq(
     val push_opt_in: Boolean? = null,
     val whatsapp_opt_in: Boolean? = null,
+    val telegram_chat_id: String? = null,
     val readiness_prompt_mins: Int? = null,
     val driver_remind_mins: Int? = null,
     val muted_categories: List<String>? = null,
@@ -508,7 +575,9 @@ data class ProfileUpdateReq(
     val auto_lock_mins: Int? = null,
     val whatsapp_opt_in: Boolean? = null,
     val push_opt_in: Boolean? = null,
+    val telegram_chat_id: String? = null,
     val badges_opt_out: Boolean? = null,
+    val onboarding_dismissed: Boolean? = null,
     val readiness_prompt_mins: Int? = null,
     val photo_file_id: Long? = null,
     val clear_photo: Boolean? = null,

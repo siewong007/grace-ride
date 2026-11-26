@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
+import org.pjstatecm.graceride.data.api.AdminDashboardStatsDto
 import org.pjstatecm.graceride.data.api.Announcement
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.EventItem
@@ -27,6 +28,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.notifications.RealtimeEvent
+import org.pjstatecm.graceride.ui.Routes
 
 data class HomeUiState(
     val loading: Boolean = true,
@@ -43,6 +45,7 @@ data class HomeUiState(
     val unpaidShares: List<Share> = emptyList(),
     val unpaidShareCount: Int = 0,
     val announcements: List<Announcement> = emptyList(),
+    val trafficStats: AdminDashboardStatsDto? = null,
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -55,7 +58,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         load(first = true)
         viewModelScope.launch {
             container.realtimeStream.events.collect { ev ->
-                if (ev != RealtimeEvent.Resume) refresh()
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) refresh()
             }
         }
         viewModelScope.launch {
@@ -95,12 +98,21 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
             val today = KlTime.today()
             val nextWeek = KlTime.todayPlusDays(7)
+            var trafficStats: AdminDashboardStatsDto? = null
             val (ridesRes, eventsRes, sharesRes, annRes, drivingRes) = coroutineScope {
                 val rDef = async { section(me?.can("rides") == true, { container.rides.upcoming() }, emptyList<Ride>()) }
                 val eDef = async { section(me?.can("events") == true, { container.events.upcoming() }, emptyList<EventItem>()) }
                 val sDef = async { section(me?.can("costs") == true, { container.shares.mine() }, emptyList<Share>()) }
-                val aDef = async { section(true, { container.community.announcements() }, emptyList<Announcement>()) }
+                val aDef = async { section(me != null, { container.community.announcements() }, emptyList<Announcement>()) }
                 val dDef = async { section(me?.can("drive") == true, { container.rides.drivingToday(today, nextWeek) }, emptyList<Ride>()) }
+                val tDef = async {
+                    if (me != null && (me.can("admin_dashboard") || Routes.canTrafficHub(me) || Routes.canAdminMembers(me))) {
+                        container.traffic.dashboardStats(passive = !first).getOrNull()
+                    } else {
+                        null
+                    }
+                }
+                trafficStats = tDef.await()
                 listOf(rDef.await(), eDef.await(), sDef.await(), aDef.await(), dDef.await()).let {
                     @Suppress("UNCHECKED_CAST")
                     Tuple5(
@@ -113,6 +125,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
 
+            val prev = _state.value
+            val sameUser = !first && me != null && prev.me?.id == me.id
             val rides = ridesRes.data
             val events = eventsRes.data
             val shares = sharesRes.data
@@ -125,6 +139,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             var effectiveDrivingAll = drivingAll
             var effectiveEvents = events
             var effectiveAnn = ann
+            var usedOfflineRidesSnap = false
+            var usedOfflineEventsCache = false
+            var usedOfflineAnnCache = false
             var offlineSnapshotAt: Long? = null
             if (me != null) {
                 if (ridesRes.ok || drivingRes.ok) {
@@ -139,6 +156,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     if (snap != null) {
                         effectiveRides = snap.rides.filter { it.viewer.isPassenger }
                         effectiveDrivingAll = snap.rides.filter { it.viewer.isDriver }
+                        usedOfflineRidesSnap = true
                         offlineSnapshotAt = snap.savedAtMillis
                     }
                 }
@@ -149,7 +167,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 } else if (offline && effectiveEvents.isEmpty()) {
                     withContext(Dispatchers.IO) {
                         container.offlineCache.read(me.id, "home_events", ListSerializer(EventItem.serializer()))
-                    }?.let { effectiveEvents = it.data }
+                    }?.let {
+                        effectiveEvents = it.data
+                        usedOfflineEventsCache = true
+                    }
                 }
                 if (annRes.ok) {
                     withContext(Dispatchers.IO) {
@@ -158,37 +179,66 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 } else if (offline && effectiveAnn.isEmpty()) {
                     withContext(Dispatchers.IO) {
                         container.offlineCache.read(me.id, "home_announcements", ListSerializer(Announcement.serializer()))
-                    }?.let { effectiveAnn = it.data }
+                    }?.let {
+                        effectiveAnn = it.data
+                        usedOfflineAnnCache = true
+                    }
                 }
             }
 
-            val drivingToday = effectiveDrivingAll.filter { it.pickupAt.take(10) == today }
-            val upcomingDrives = effectiveDrivingAll
-                .filter { it.pickupAt.take(10) > today && it.status in RideStatus.active }
-                .sortedBy { it.pickupAt }
-            val nextUpcomingDrive = upcomingDrives.firstOrNull()
+            val preserveDriving = sameUser && me?.can("drive") == true && !drivingRes.ok && !usedOfflineRidesSnap
+            val drivingToday = if (preserveDriving) {
+                prev.drivingToday
+            } else {
+                effectiveDrivingAll.filter { it.pickupAt.take(10) == today }.sortedBy { KlTime.sortKey(it.pickupAt) }
+            }
+            val upcomingDrives = if (preserveDriving) {
+                prev.upcomingDrives
+            } else {
+                effectiveDrivingAll
+                    .filter { it.pickupAt.take(10) > today && it.status in RideStatus.active }
+                    .sortedBy { KlTime.sortKey(it.pickupAt) }
+            }
+            val nextUpcomingDrive = if (preserveDriving) prev.nextUpcomingDrive else upcomingDrives.firstOrNull()
 
-            val next = effectiveRides
-                .filter { it.status in RideStatus.active && it.viewer.isPassenger }
-                .minByOrNull { it.pickupAt }
+            val next = if (sameUser && me?.can("rides") == true && !ridesRes.ok && !usedOfflineRidesSnap) {
+                prev.nextRide
+            } else {
+                effectiveRides
+                    .filter { it.status in RideStatus.active && it.viewer.isPassenger }
+                    .minByOrNull { KlTime.sortKey(it.pickupAt) }
+            }
+            val preserveShares = sameUser && me?.can("costs") == true && !sharesRes.ok
             val allUnpaid = shares.filter { it.status == "unpaid" || it.status == "needs_info" }
-            val unpaidShares = allUnpaid.take(3)
+            val unpaidShares = if (preserveShares) prev.unpaidShares else allUnpaid.take(3)
+            val unpaidShareCount = if (preserveShares) prev.unpaidShareCount else allUnpaid.size
+            val finalEvents = if (sameUser && me?.can("events") == true && !eventsRes.ok && !usedOfflineEventsCache) {
+                prev.events
+            } else {
+                effectiveEvents.take(3)
+            }
+            val finalAnn = if (sameUser && !annRes.ok && !usedOfflineAnnCache) {
+                prev.announcements
+            } else {
+                effectiveAnn.sortedByDescending { it.pinned }.take(3)
+            }
 
             _state.value = HomeUiState(
                 loading = false,
                 refreshing = false,
                 offline = offline,
                 offlineSnapshotAt = offlineSnapshotAt,
-                error = if (effectiveRides.isEmpty() && effectiveEvents.isEmpty() && unpaidShares.isEmpty() && effectiveAnn.isEmpty() && effectiveDrivingAll.isEmpty()) error else null,
+                error = if (next == null && finalEvents.isEmpty() && unpaidShares.isEmpty() && finalAnn.isEmpty() && drivingToday.isEmpty() && nextUpcomingDrive == null) error else null,
                 me = me,
                 nextRide = next,
                 drivingToday = drivingToday,
                 nextUpcomingDrive = nextUpcomingDrive,
                 upcomingDrives = upcomingDrives,
-                events = effectiveEvents.take(3),
+                events = finalEvents,
                 unpaidShares = unpaidShares,
-                unpaidShareCount = allUnpaid.size,
-                announcements = effectiveAnn.sortedByDescending { it.pinned }.take(3),
+                unpaidShareCount = unpaidShareCount,
+                announcements = finalAnn,
+                trafficStats = trafficStats ?: if (sameUser && (Routes.canTrafficHub(me) || Routes.canAdminMembers(me) || me?.can("admin_dashboard") == true)) prev.trafficStats else null,
             )
             container.appContext?.let { ctx ->
                 withContext(Dispatchers.IO) {

@@ -6,7 +6,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,11 +35,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -119,12 +124,12 @@ object BadgeIcons {
 
 @Composable
 fun BadgeIcon(
+    modifier: Modifier = Modifier,
     badge: Badge? = null,
     icon: String? = null,
     fallbackChar: String? = null,
     size: Dp = 24.dp,
     tint: Color = LocalContentColor.current,
-    modifier: Modifier = Modifier,
 ) {
     val resolved = remember(badge, icon, fallbackChar) {
         BadgeIcons.resolve(badge, icon, fallbackChar)
@@ -235,33 +240,52 @@ object BadgeTierStyle {
 
 @Composable
 fun TieredBadgeMedallion(
+    modifier: Modifier = Modifier,
     badge: Badge? = null,
     icon: String? = null,
     fallbackChar: String? = null,
     size: Dp = 56.dp,
-    modifier: Modifier = Modifier,
 ) {
     val tier = BadgeTierStyle.resolveTier(badge)
     val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val palette = BadgeTierStyle.palette(tier, darkTheme = darkTheme)
-    val ringColor = if (tier == "gold" || tier == "platinum") {
-        val pulse by rememberInfiniteTransition(label = "tier_medallion").animateFloat(
+    val animateRing = (tier == "gold" || tier == "platinum") && animatorsEnabled()
+    val pulseState: State<Float>? = if (animateRing) {
+        rememberInfiniteTransition(label = "tier_medallion").animateFloat(
             initialValue = 0.68f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
             label = "tier_ring_alpha",
         )
-        palette.ring.copy(alpha = pulse)
     } else {
-        palette.ring
+        null
     }
+    val strokeWidth = if (tier == "none") 1.5.dp else 2.dp
 
     Surface(
         color = palette.bg,
         contentColor = palette.ink,
         shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(if (tier == "none") 1.5.dp else 2.dp, ringColor),
-        modifier = modifier.size(size),
+        border = null,
+        modifier = modifier
+            .size(size)
+            .drawWithContent {
+                drawContent()
+                val sw = strokeWidth.toPx()
+                val halfSw = sw / 2f
+                val cornerPx = (12.dp.toPx() - halfSw).coerceAtLeast(0f)
+                val alpha = pulseState?.value ?: 1f
+                drawRoundRect(
+                    color = palette.ring.copy(alpha = alpha),
+                    topLeft = Offset(halfSw, halfSw),
+                    size = Size(
+                        width = (this.size.width - sw).coerceAtLeast(0f),
+                        height = (this.size.height - sw).coerceAtLeast(0f),
+                    ),
+                    cornerRadius = CornerRadius(cornerPx, cornerPx),
+                    style = Stroke(width = sw),
+                )
+            },
     ) {
         Box(
             contentAlignment = Alignment.Center,

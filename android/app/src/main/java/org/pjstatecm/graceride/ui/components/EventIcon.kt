@@ -69,9 +69,9 @@ object EventIcons {
 @Composable
 fun EventIcon(
     icon: String?,
+    modifier: Modifier = Modifier,
     kind: String = "",
     size: Dp = 22.dp,
-    modifier: Modifier = Modifier,
 ) {
     val assetUri = remember(icon, kind) { EventIcons.assetUri(icon, kind) }
     if (assetUri != null) {

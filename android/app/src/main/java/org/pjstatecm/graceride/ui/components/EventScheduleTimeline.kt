@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -100,181 +101,183 @@ fun ScheduleTimeline(
 
     Column(modifier = modifier.fillMaxWidth()) {
         items.forEachIndexed { index, node ->
-            val isLast = index == items.lastIndex
-            val rowModifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min)
-                .clip(MaterialTheme.shapes.small)
-                .let { base ->
-                    if (node.onClick != null) {
-                        base.defaultMinSize(minHeight = 48.dp).clickable(onClick = node.onClick)
-                    } else {
-                        base
+            key(node.id) {
+                val isLast = index == items.lastIndex
+                val rowModifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+                    .clip(MaterialTheme.shapes.small)
+                    .let { base ->
+                        if (node.onClick != null) {
+                            base.defaultMinSize(minHeight = 48.dp).clickable(onClick = node.onClick)
+                        } else {
+                            base
+                        }
                     }
-                }
 
-            Row(modifier = rowModifier) {
-                Text(
-                    text = node.timeLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = if (node.state == TimelineState.ACTIVE) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier
-                        .width(64.dp)
-                        .padding(top = 12.dp, end = Spacing.xs),
-                )
+                Row(modifier = rowModifier) {
+                    Text(
+                        text = node.timeLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (node.state == TimelineState.ACTIVE) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier
+                            .width(64.dp)
+                            .padding(top = 12.dp, end = Spacing.xs),
+                    )
 
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .width(20.dp)
-                        .fillMaxHeight(),
-                ) {
-                    Spacer(Modifier.height(14.dp))
-                    when (node.state) {
-                        TimelineState.ACTIVE -> {
-                            if (animatorsEnabled()) {
-                                val halo = rememberInfiniteTransition(label = "timeline_active")
-                                val haloScale by halo.animateFloat(
-                                    initialValue = 1.0f,
-                                    targetValue = 1.9f,
-                                    animationSpec = infiniteRepeatable(
-                                        animation = tween(1800, easing = FastOutSlowInEasing),
-                                        repeatMode = RepeatMode.Restart,
-                                    ),
-                                    label = "halo_scale",
-                                )
-                                val haloAlpha by halo.animateFloat(
-                                    initialValue = 0.35f,
-                                    targetValue = 0f,
-                                    animationSpec = infiniteRepeatable(
-                                        animation = tween(1800, easing = FastOutSlowInEasing),
-                                        repeatMode = RepeatMode.Restart,
-                                    ),
-                                    label = "halo_alpha",
-                                )
-                                Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
-                                    Box(
-                                        modifier = Modifier
-                                            .matchParentSize()
-                                            .graphicsLayer {
-                                                scaleX = haloScale
-                                                scaleY = haloScale
-                                                alpha = haloAlpha
-                                            }
-                                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(20.dp)
+                            .fillMaxHeight(),
+                    ) {
+                        Spacer(Modifier.height(14.dp))
+                        when (node.state) {
+                            TimelineState.ACTIVE -> {
+                                if (animatorsEnabled()) {
+                                    val halo = rememberInfiniteTransition(label = "timeline_active")
+                                    val haloScale by halo.animateFloat(
+                                        initialValue = 1.0f,
+                                        targetValue = 1.9f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(1800, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Restart,
+                                        ),
+                                        label = "halo_scale",
                                     )
+                                    val haloAlpha by halo.animateFloat(
+                                        initialValue = 0.35f,
+                                        targetValue = 0f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(1800, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Restart,
+                                        ),
+                                        label = "halo_alpha",
+                                    )
+                                    Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .graphicsLayer {
+                                                    scaleX = haloScale
+                                                    scaleY = haloScale
+                                                    alpha = haloAlpha
+                                                }
+                                                .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                        )
+                                    }
+                                } else {
                                     Box(
                                         modifier = Modifier
-                                            .matchParentSize()
+                                            .size(12.dp)
                                             .background(MaterialTheme.colorScheme.primary, CircleShape),
                                     )
                                 }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
-                                )
+                            }
+                            TimelineState.DONE -> Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), CircleShape),
+                            )
+                            TimelineState.UPCOMING -> Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                    .border(2.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                            )
+                        }
+                        if (!isLast) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .width(2.dp)
+                                    .weight(1f)
+                                    .defaultMinSize(minHeight = 16.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant),
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(
+                                start = Spacing.xs,
+                                end = Spacing.xs,
+                                top = 10.dp,
+                                bottom = if (isLast) Spacing.xs else Spacing.sm,
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                text = node.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (node.onClick != null && node.state == TimelineState.ACTIVE) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            node.badge?.let { badge ->
+                                StatusPill(text = badge.text, kind = badge.kind)
                             }
                         }
-                        TimelineState.DONE -> Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), CircleShape),
-                        )
-                        TimelineState.UPCOMING -> Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(MaterialTheme.colorScheme.surface, CircleShape)
-                                .border(2.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
-                        )
-                    }
-                    if (!isLast) {
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 4.dp)
-                                .width(2.dp)
-                                .weight(1f)
-                                .defaultMinSize(minHeight = 16.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant),
-                        )
-                    }
-                }
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(
-                            start = Spacing.xs,
-                            end = Spacing.xs,
-                            top = 10.dp,
-                            bottom = if (isLast) Spacing.xs else Spacing.sm,
-                        ),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = node.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = if (node.onClick != null && node.state == TimelineState.ACTIVE) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                        )
-                        node.badge?.let { badge ->
-                            StatusPill(text = badge.text, kind = badge.kind)
+                        if (!node.subtitle.isNullOrBlank()) {
+                            Text(
+                                text = node.subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
-                    if (!node.subtitle.isNullOrBlank()) {
-                        Text(
-                            text = node.subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
 
-                val iconBg = if (node.state == TimelineState.ACTIVE) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                }
-                val iconFg = if (node.state == TimelineState.ACTIVE) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
-                Surface(
-                    color = iconBg,
-                    contentColor = iconFg,
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .size(34.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (node.kind == TimelineKind.EVENT) {
-                            EventIcon(icon = node.eventIcon, kind = node.eventKind, size = 22.dp)
-                        } else {
-                            Icon(
-                                imageVector = iconFor(node.kind),
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
+                    val iconBg = if (node.state == TimelineState.ACTIVE) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    }
+                    val iconFg = if (node.state == TimelineState.ACTIVE) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Surface(
+                        color = iconBg,
+                        contentColor = iconFg,
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .size(34.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (node.kind == TimelineKind.EVENT) {
+                                EventIcon(icon = node.eventIcon, kind = node.eventKind, size = 22.dp)
+                            } else {
+                                Icon(
+                                    imageVector = iconFor(node.kind),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
                         }
                     }
                 }

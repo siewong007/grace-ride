@@ -99,14 +99,35 @@ sealed interface CheckinParseResult {
 private val CHECKIN_EVENT_PATH_RE = Regex("/events/(\\d+)/checkin", RegexOption.IGNORE_CASE)
 private val GRPASS_RE = Regex("^grpass:(\\d*):(.+)$", RegexOption.IGNORE_CASE)
 
+private fun decodePercentComponent(encoded: String): String {
+    if ('%' !in encoded) return encoded
+    val out = ArrayList<Byte>(encoded.length)
+    var i = 0
+    while (i < encoded.length) {
+        val ch = encoded[i]
+        if (ch == '%' && i + 2 < encoded.length) {
+            val hi = encoded[i + 1].digitToIntOrNull(16)
+            val lo = encoded[i + 2].digitToIntOrNull(16)
+            if (hi != null && lo != null) {
+                out.add(((hi shl 4) or lo).toByte())
+                i += 3
+                continue
+            }
+        }
+        for (b in ch.toString().encodeToByteArray()) out.add(b)
+        i++
+    }
+    return out.toByteArray().decodeToString()
+}
+
 private fun parseQueryParams(rawQuery: String?): Map<String, String> {
     val q = rawQuery?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyMap()
     val out = LinkedHashMap<String, String>()
     for (pair in q.split('&')) {
         val idx = pair.indexOf('=')
         if (idx <= 0) continue
-        val key = runCatching { java.net.URLDecoder.decode(pair.substring(0, idx), "UTF-8") }.getOrDefault(pair.substring(0, idx))
-        val value = runCatching { java.net.URLDecoder.decode(pair.substring(idx + 1), "UTF-8") }.getOrDefault(pair.substring(idx + 1))
+        val key = decodePercentComponent(pair.substring(0, idx))
+        val value = decodePercentComponent(pair.substring(idx + 1))
         out[key] = value
     }
     return out
@@ -114,13 +135,16 @@ private fun parseQueryParams(rawQuery: String?): Map<String, String> {
 
 /**
  * Normalizes a scanned or pasted venue check-in code or URL (supporting query `code=...`,
- * URL encoding, `#fragment` stripping, and mismatching `/events/{otherId}` detection).
+ * code-less `/events/{id}/checkin` URLs, URL encoding, `#fragment` stripping, and mismatching
+ * `/events/{otherId}` detection). Rejects member-pass `GRPASS:` QRs in self-check-in mode.
  */
 fun parseCheckinInput(raw: String, currentEventId: Long): CheckinParseResult {
     val trimmed = raw.trim()
     if (trimmed.isEmpty()) return CheckinParseResult.Invalid
+    if (GRPASS_RE.matches(trimmed)) return CheckinParseResult.Invalid
     val looksLikeUrl = trimmed.startsWith("http://", ignoreCase = true) ||
         trimmed.startsWith("https://", ignoreCase = true) ||
+        trimmed.startsWith("graceride://", ignoreCase = true) ||
         trimmed.startsWith("/events/", ignoreCase = true) ||
         trimmed.contains("code=", ignoreCase = true)
     if (!looksLikeUrl) return CheckinParseResult.Code(trimmed)
@@ -134,8 +158,11 @@ fun parseCheckinInput(raw: String, currentEventId: Long): CheckinParseResult {
         return CheckinParseResult.WrongEvent
     }
     val rawQuery = uri?.rawQuery ?: trimmed.substringAfter('?', "").substringBefore('#')
-    val code = parseQueryParams(rawQuery)["code"]?.trim()
-    return if (!code.isNullOrEmpty()) CheckinParseResult.Code(code) else CheckinParseResult.Invalid
+    val params = parseQueryParams(rawQuery)
+    val code = params.entries.firstOrNull { it.key.equals("code", ignoreCase = true) }?.value?.trim()
+    if (!code.isNullOrEmpty()) return CheckinParseResult.Code(code)
+    if (pathEventId != null) return CheckinParseResult.Code("")
+    return CheckinParseResult.Invalid
 }
 
 /**
@@ -175,8 +202,17 @@ fun launchNativeQrScanner(
                 val raw = barcode.rawValue?.trim()
                 if (!raw.isNullOrEmpty()) onResult(raw)
             }
-            .addOnFailureListener {
-                onUnavailable()
+            .addOnCanceledListener {
+                // User backed out of the scanner UI; keep manual entry quiet.
+            }
+            .addOnFailureListener { err ->
+                val mlkitCancelled = (err as? com.google.mlkit.common.MlKitException)?.errorCode ==
+                    com.google.mlkit.common.MlKitException.CODE_SCANNER_CANCELLED
+                val gmsCancelled = (err as? com.google.android.gms.common.api.ApiException)?.statusCode ==
+                    com.google.android.gms.common.api.CommonStatusCodes.CANCELED
+                if (!mlkitCancelled && !gmsCancelled) {
+                    onUnavailable()
+                }
             }
     } catch (_: Exception) {
         onUnavailable()

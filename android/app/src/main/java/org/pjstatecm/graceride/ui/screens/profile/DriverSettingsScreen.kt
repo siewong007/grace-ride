@@ -99,6 +99,8 @@ import org.pjstatecm.graceride.ui.theme.tabular
 fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
     val vm: DriverSettingsViewModel = viewModel(factory = DriverSettingsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
     val navAppPref by container.navAppPref.collectAsStateWithLifecycle()
@@ -151,7 +153,7 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
                     }
                 },
                 actions = {
-                    if (container.auth.me?.can("drive", "update") == true && !state.accessDenied) {
+                    if (me?.can("drive", "update") == true && !state.accessDenied) {
                         IconButton(onClick = openAddVehicle) {
                             Icon(
                                 Icons.Outlined.Add,
@@ -164,7 +166,7 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        val canDriveUpdate = container.auth.me?.can("drive", "update") == true
+        val canDriveUpdate = me?.can("drive", "update") == true
         when {
             state.accessDenied -> EmptyView(
                 text = stringResource(R.string.role_driver_access_required),

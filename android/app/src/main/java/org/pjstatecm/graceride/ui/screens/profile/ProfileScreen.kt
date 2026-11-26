@@ -22,15 +22,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PeopleOutline
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.HorizontalDivider
@@ -44,6 +49,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +62,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -63,6 +72,8 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.notifications.NotificationHelper
+import org.pjstatecm.graceride.domain.RoleLabels
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.LocalBottomBarClearance
 import org.pjstatecm.graceride.ui.NavProvider
@@ -137,13 +148,37 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
     }
     val onWord = stringResource(R.string.common_on)
     val offWord = stringResource(R.string.common_off)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var osNotifsEnabled by remember { mutableStateOf(NotificationHelper.areNotificationsEnabled(context)) }
+    DisposableEffect(lifecycleOwner, context) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                osNotifsEnabled = NotificationHelper.areNotificationsEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     val pushOn = state.notifPrefs?.pushOptIn ?: me?.pushOptIn ?: true
     val waOn = state.notifPrefs?.whatsappOptIn ?: me?.whatsappOptIn ?: false
-    val notifSummary = stringResource(
-        R.string.notif_summary_channels,
-        if (pushOn) onWord else offWord,
-        if (waOn) onWord else offWord,
-    )
+    val telegramOn = state.notifPrefs?.telegramChatId?.isNotBlank() == true
+    val notifSummary = if (!osNotifsEnabled) {
+        stringResource(R.string.notif_summary_os_off)
+    } else {
+        buildString {
+            append(
+                stringResource(
+                    R.string.notif_summary_channels,
+                    if (pushOn) onWord else offWord,
+                    if (waOn) onWord else offWord,
+                ),
+            )
+            if (telegramOn) {
+                append(" · ")
+                append(stringResource(R.string.notif_summary_telegram_on))
+            }
+        }
+    }
     val bioEnabledHere = me != null && biometricEnrollment?.userId == me.id
     val lockText = when (val mins = me?.autoLockMins ?: 0) {
         0 -> stringResource(R.string.profile_auto_lock_default)
@@ -246,7 +281,7 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                             shape = CircleShape,
                                         ) {
-                                            val roleLabel = builtInRoleLabelRes(roleKey)?.let { stringResource(it) }
+                                            val roleLabel = RoleLabels.builtInLabelRes(roleKey)?.let { stringResource(it) }
                                                 ?: me?.roleNames?.get(roleKey)
                                                 ?: roleKey
                                             Text(
@@ -283,11 +318,14 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                 label = stringResource(R.string.saved_addresses_title),
                                 icon = Icons.Outlined.LocationOn,
                             ) { nav.navigate(AppRoute.SavedAddresses) }
+                        }
+                        if (me != null) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             ProfileRow(
-                                label = stringResource(R.string.proxy_riders_title),
+                                label = stringResource(R.string.profile_family_and_proxy),
+                                subtitle = stringResource(R.string.profile_family_and_proxy_desc),
                                 icon = Icons.Outlined.Groups,
-                            ) { nav.navigate(AppRoute.ProxyRiders) }
+                            ) { nav.navigate(AppRoute.Family) }
                         }
                         if (me?.can("drive") == true) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -340,6 +378,51 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 }
             }
 
+            // 3b. Native staff workspaces (Traffic Hub, Members & invites, Announcements)
+            if (me != null && me.status != "pending") {
+                val hasTraffic = Routes.canTrafficHub(me)
+                val hasMembers = Routes.canAdminMembers(me)
+                val hasAnnouncements = Routes.canManageAnnouncements(me)
+                if (hasTraffic || hasMembers || hasAnnouncements) {
+                    item { SectionHeader(stringResource(R.string.profile_section_admin)) }
+                    item {
+                        OutlinedCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Column {
+                                var needDivider = false
+                                if (hasTraffic) {
+                                    ProfileRow(
+                                        label = stringResource(R.string.profile_traffic_workspace),
+                                        subtitle = stringResource(R.string.profile_traffic_workspace_desc),
+                                        icon = Icons.AutoMirrored.Outlined.AltRoute,
+                                    ) { nav.navigate(AppRoute.TrafficHub()) }
+                                    needDivider = true
+                                }
+                                if (hasMembers) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.profile_admin_members),
+                                        subtitle = stringResource(R.string.profile_admin_members_desc),
+                                        icon = Icons.Outlined.PeopleOutline,
+                                    ) { nav.navigate(AppRoute.AdminMembers()) }
+                                    needDivider = true
+                                }
+                                if (hasAnnouncements) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.profile_admin_announcements),
+                                        subtitle = stringResource(R.string.profile_admin_announcements_desc),
+                                        icon = Icons.Outlined.Campaign,
+                                    ) { nav.navigate(AppRoute.Announcements(manage = true)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 4. More in Web App (staff, admin, and event organisers only — permission-gated)
             if (me != null && me.status != "pending" && Routes.canUseStaffWeb(me)) {
                 val webRows = buildList<Triple<Int, ImageVector, String>> {
@@ -370,6 +453,27 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // 4b. Legal & open-source notices
+            item { SectionHeader(stringResource(R.string.profile_section_legal)) }
+            item {
+                OutlinedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column {
+                        ProfileRow(
+                            label = stringResource(R.string.profile_terms),
+                            icon = Icons.Outlined.Description,
+                        ) { nav.navigate(AppRoute.TermsPublic) }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        ProfileRow(
+                            label = stringResource(R.string.profile_licenses),
+                            icon = Icons.Outlined.Gavel,
+                        ) { nav.navigate(AppRoute.Licenses) }
                     }
                 }
             }
@@ -415,24 +519,6 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
             },
         )
     }
-}
-
-private fun builtInRoleLabelRes(name: String): Int? = when (name) {
-    "member" -> R.string.role_member
-    "superadmin" -> R.string.role_superadmin
-    "admin" -> R.string.role_admin
-    "president" -> R.string.role_president
-    "vice_president" -> R.string.role_vice_president
-    "secretary" -> R.string.role_secretary
-    "traffic_head" -> R.string.role_traffic_head
-    "traffic_member" -> R.string.role_traffic_member
-    "cell_leader" -> R.string.role_cell_leader
-    "transport" -> R.string.role_transport
-    "finance" -> R.string.role_finance
-    "auditor" -> R.string.role_auditor
-    "leader" -> R.string.role_leader
-    "driver" -> R.string.role_driver
-    else -> null
 }
 
 private val TRAFFIC_HUB_PERMS = listOf(

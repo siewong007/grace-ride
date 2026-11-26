@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path
+        name="shared_avatars"
+        path="shared_avatars/" />
+    <cache-path
+        name="shared_plans"
+        path="shared_plans/" />
+    <cache-path
+        name="shared_exports"
+        path="shared_exports/" />
+</paths>

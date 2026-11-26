@@ -119,25 +119,12 @@ fun RideNewScreen(
     eventId: Long?,
     initialProxy: Boolean = false,
 ) {
-    val vm: RideNewViewModel = viewModel(factory = RideNewViewModel.factory(container, eventId, initialProxy))
-    val s by vm.state.collectAsStateWithLifecycle()
-    val view = LocalView.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    var resumedOnce by remember { mutableStateOf(false) }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                if (resumedOnce) vm.refreshPlacesAndProxies() else resumedOnce = true
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     // Rides exist only for events: without one, point the member at the events
     // list, exactly like the web's /rides/new without ?event=.
     if (eventId == null) {
+        val authState by container.auth.state.collectAsStateWithLifecycle()
+        val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
+        val canViewEvents = me == null || me.can("events", "view")
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -159,12 +146,31 @@ fun RideNewScreen(
                     text = stringResource(R.string.ride_new_event_first_title),
                     icon = Icons.Outlined.Event,
                     subtitle = stringResource(R.string.ride_new_event_first_desc),
-                    actionLabel = stringResource(R.string.ride_new_browse_events),
-                    onAction = { nav.navigateTab(AppRoute.Events) },
+                    actionLabel = if (canViewEvents) stringResource(R.string.ride_new_browse_events) else null,
+                    onAction = if (canViewEvents) { { nav.navigateTab(AppRoute.Events) } } else null,
                 )
             }
         }
         return
+    }
+
+    val vm: RideNewViewModel = viewModel(
+        key = "ride-new-$eventId-$initialProxy",
+        factory = RideNewViewModel.factory(container, eventId, initialProxy),
+    )
+    val s by vm.state.collectAsStateWithLifecycle()
+    val view = LocalView.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumedOnce by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (resumedOnce) vm.refreshPlacesAndProxies() else resumedOnce = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     var showDate by remember { mutableStateOf(false) }
@@ -243,7 +249,7 @@ fun RideNewScreen(
     ) { padding ->
         when {
             s.loading -> DetailSkeleton(Modifier.padding(padding))
-            s.loadError != null && ev == null -> ErrorView(s.loadError ?: "", vm::retryLoad, Modifier.padding(padding))
+            s.loadError != null && ev == null -> ErrorView(s.loadError ?: "", modifier = Modifier.padding(padding), onRetry = vm::retryLoad)
             ev != null && ev.mySignup?.status != "going" -> {
                 Column(
                     Modifier.fillMaxSize().padding(padding).padding(Spacing.md),
@@ -334,7 +340,7 @@ fun RideNewScreen(
                             ) {
                                 Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("%02d:%02d".format(s.hour, s.minute), style = MaterialTheme.typography.labelLarge.tabular())
+                                Text(java.util.Locale.US.let { "%02d:%02d".format(it, s.hour, s.minute) }, style = MaterialTheme.typography.labelLarge.tabular())
                             }
                         }
 
@@ -372,7 +378,7 @@ fun RideNewScreen(
                                     ) {
                                         Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("%02d:%02d".format(s.returnHour, s.returnMinute), style = MaterialTheme.typography.labelLarge.tabular())
+                                        Text(java.util.Locale.US.let { "%02d:%02d".format(it, s.returnHour, s.returnMinute) }, style = MaterialTheme.typography.labelLarge.tabular())
                                     }
                                 }
                             }
@@ -393,7 +399,7 @@ fun RideNewScreen(
                                 checked = s.isProxy,
                                 onCheckedChange = { checked ->
                                     UiHaptics.tick(view)
-                                    vm.update { it.copy(isProxy = checked) }
+                                    vm.setProxyMode(checked)
                                 },
                             )
                         }
@@ -574,7 +580,7 @@ fun RideNewScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        if (s.suggestions.isNotEmpty()) {
+                        if (s.suggestions.isNotEmpty() && s.tripType != TripType.RETURN) {
                             OutlinedCard(Modifier.fillMaxWidth()) {
                                 Column {
                                     val unique = s.suggestions.distinctBy { it.label }.take(5)
@@ -613,10 +619,55 @@ fun RideNewScreen(
 
                         OutlinedTextField(
                             value = s.destination,
-                            onValueChange = { v -> vm.update { it.copy(destination = v) } },
+                            onValueChange = vm::onDestinationChange,
                             label = { Text(stringResource(R.string.ride_new_destination)) },
+                            trailingIcon = if (s.tripType == TripType.RETURN && s.destination.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = { vm.onDestinationChange("") }) {
+                                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.a11y_clear))
+                                    }
+                                }
+                            } else {
+                                null
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (s.suggestions.isNotEmpty() && s.tripType == TripType.RETURN) {
+                            OutlinedCard(Modifier.fillMaxWidth()) {
+                                Column {
+                                    val unique = s.suggestions.distinctBy { it.label }.take(5)
+                                    unique.forEachIndexed { idx, place ->
+                                        if (idx > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                        Surface(
+                                            onClick = { vm.pickSuggestion(place) },
+                                            color = MaterialTheme.colorScheme.surface,
+                                        ) {
+                                            Row(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .defaultMinSize(minHeight = 48.dp)
+                                                    .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                            ) {
+                                                Icon(
+                                                    Icons.Outlined.LocationOn,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                                Text(
+                                                    place.label,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         val memberAddr = (if (s.tripType == TripType.RETURN) s.destination else s.address).trim()
                         val alreadySaved = s.savedPlaces.any { it.address.trim().equals(memberAddr, ignoreCase = true) }
@@ -766,13 +817,25 @@ fun RideNewScreen(
     }
 
     if (showDate) {
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = DatePickerUtc.toPickerMillis(s.date))
+        val todayMillis = remember { DatePickerUtc.toPickerMillis(KlTime.todayDate()) }
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = DatePickerUtc.toPickerMillis(s.date),
+            selectableDates = object : androidx.compose.material3.SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis >= todayMillis
+            },
+        )
         DatePickerDialog(
             onDismissRequest = { showDate = false },
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let { millis ->
-                        vm.update { it.copy(date = DatePickerUtc.fromPickerMillis(millis)) }
+                        val picked = DatePickerUtc.fromPickerMillis(millis)
+                        vm.update {
+                            it.copy(
+                                date = picked,
+                                returnDate = if (it.returnDate.isBefore(picked)) picked else it.returnDate,
+                            )
+                        }
                     }
                     showDate = false
                 }) { Text(stringResource(R.string.common_confirm)) }
@@ -789,7 +852,13 @@ fun RideNewScreen(
         )
     }
     if (showReturnDate) {
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = DatePickerUtc.toPickerMillis(s.returnDate))
+        val minReturnMillis = DatePickerUtc.toPickerMillis(s.date)
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = DatePickerUtc.toPickerMillis(s.returnDate),
+            selectableDates = object : androidx.compose.material3.SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis >= minReturnMillis
+            },
+        )
         DatePickerDialog(
             onDismissRequest = { showReturnDate = false },
             confirmButton = {

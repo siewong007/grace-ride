@@ -9,14 +9,6 @@ import android.graphics.Path as AndroidPath
 import android.graphics.RadialGradient as AndroidRadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -156,7 +148,7 @@ internal fun fillEyeAndroidPath(
 }
 
 fun renderGrokBotPngBitmap(spec: GrokBotSpec, size: Int = 512): Bitmap {
-    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val bmp = androidx.core.graphics.createBitmap(size, size)
     val canvas = AndroidCanvas(bmp)
     val scale = size / 250f
     val cx = size * 0.5f

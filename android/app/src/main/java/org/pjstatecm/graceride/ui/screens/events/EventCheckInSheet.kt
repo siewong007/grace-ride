@@ -106,8 +106,12 @@ fun EventCheckInSheet(
     var scannerUnavailable by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     val wrongEventMsg = stringResource(R.string.event_checkin_wrong_event)
-    val invalidCodeMsg = stringResource(R.string.event_scanner_unavailable)
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val invalidCodeMsg = stringResource(R.string.event_invalid_qr)
+    val canDismiss by androidx.compose.runtime.rememberUpdatedState(!busy)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { canDismiss },
+    )
 
     fun submitRaw(raw: String) {
         val parsed = if (scannerModeForOrganiser) {
@@ -129,7 +133,7 @@ fun EventCheckInSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }, sheetState = sheetState) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -194,7 +198,11 @@ fun EventCheckInSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(48.dp)) {
+                OutlinedButton(
+                    onClick = { if (!busy) onDismiss() },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                ) {
                     Text(stringResource(R.string.common_cancel))
                 }
                 Button(

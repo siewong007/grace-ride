@@ -13,6 +13,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +32,7 @@ data class LoginUiState(
     val email: String = "",
     val signingIn: Boolean = false,
     val error: String? = null,
-    @StringRes val errorRes: Int? = null,
+    @param:StringRes @get:StringRes val errorRes: Int? = null,
     val noPasskeyHint: Boolean = false,
     val devUsers: List<DevUser> = emptyList(),
     val serverUrl: String = "",
@@ -39,6 +41,13 @@ data class LoginUiState(
     val turnstileSiteKey: String? = null,
     val turnstilePrompted: Boolean = false,
     val turnstileAction: String = "passkey_login",
+    val recoveryOpen: Boolean = false,
+    val recoveryEmail: String = "",
+    val recoveryReason: String = "",
+    val recoverySubmitting: Boolean = false,
+    val recoverySent: Boolean = false,
+    val recoveryError: String? = null,
+    @param:StringRes @get:StringRes val recoveryErrorRes: Int? = null,
 )
 
 class LoginViewModel(
@@ -47,6 +56,8 @@ class LoginViewModel(
 ) : ViewModel() {
 
     private val siteKeyRe = Regex("^[A-Za-z0-9_-]+$")
+    private var turnstileConfigLoaded = false
+    private var turnstileConfigJob: Job? = null
     val biometricEnrollment: StateFlow<BiometricEnrollment?> = container.biometric.enrollment
     val keyInvalidatedNotice: StateFlow<Boolean> = container.biometric.keyInvalidatedNotice
 
@@ -78,22 +89,41 @@ class LoginViewModel(
     }
 
     fun loadTurnstileConfig() {
-        viewModelScope.launch {
-            try {
-                val cfg = container.auth.turnstileConfig()
-                val validKey = cfg.siteKey?.takeIf { siteKeyRe.matches(it) }
-                _state.value = _state.value.copy(
-                    turnstileEnabled = cfg.enabled && validKey != null,
-                    turnstileSiteKey = validKey,
-                    turnstilePrompted = false,
-                )
-            } catch (_: ApiException) {
-                _state.value = _state.value.copy(
-                    turnstileEnabled = false,
-                    turnstileSiteKey = null,
-                    turnstilePrompted = false,
-                )
+        turnstileConfigJob?.cancel()
+        turnstileConfigJob = viewModelScope.launch {
+            fetchTurnstileConfig(resetPrompt = true)
+        }
+    }
+
+    private suspend fun awaitTurnstileConfigIfPending() {
+        if (!turnstileConfigLoaded) {
+            val job = turnstileConfigJob
+            if (job != null && job.isActive) {
+                job.join()
             }
+        }
+    }
+
+    private suspend fun fetchTurnstileConfig(resetPrompt: Boolean = false): Boolean {
+        return try {
+            val cfg = container.auth.turnstileConfig()
+            val validKey = cfg.siteKey?.takeIf { siteKeyRe.matches(it) }
+            val enabled = cfg.enabled && validKey != null
+            turnstileConfigLoaded = true
+            _state.value = _state.value.copy(
+                turnstileEnabled = enabled,
+                turnstileSiteKey = validKey,
+                turnstilePrompted = if (resetPrompt) false else _state.value.turnstilePrompted,
+            )
+            enabled
+        } catch (_: ApiException) {
+            turnstileConfigLoaded = true
+            _state.value = _state.value.copy(
+                turnstileEnabled = false,
+                turnstileSiteKey = null,
+                turnstilePrompted = if (resetPrompt) false else _state.value.turnstilePrompted,
+            )
+            false
         }
     }
 
@@ -114,8 +144,16 @@ class LoginViewModel(
 
     fun applyServer(url: String) {
         try {
-            container.setBaseUrl(url)
-            _state.value = _state.value.copy(serverUrl = container.baseUrl, error = null, errorRes = null)
+            container.setBaseUrl(url, clearSessionIfChanged = true)
+            turnstileConfigLoaded = false
+            _state.value = _state.value.copy(
+                serverUrl = container.baseUrl,
+                turnstileEnabled = false,
+                turnstileSiteKey = null,
+                turnstilePrompted = false,
+                error = null,
+                errorRes = null,
+            )
             loadTurnstileConfig()
             loadDevUsers()
         } catch (_: IllegalArgumentException) {
@@ -126,6 +164,93 @@ class LoginViewModel(
     fun clearError() { _state.value = _state.value.copy(error = null, errorRes = null, noPasskeyHint = false) }
 
     fun dismissTurnstile() { _state.value = _state.value.copy(turnstilePrompted = false) }
+
+    fun openRecovery() {
+        _state.value = _state.value.copy(
+            recoveryOpen = true,
+            recoveryEmail = _state.value.recoveryEmail.ifBlank { _state.value.email },
+            recoverySent = false,
+            recoveryError = null,
+            recoveryErrorRes = null,
+        )
+    }
+
+    fun closeRecovery() {
+        _state.value = _state.value.copy(
+            recoveryOpen = false,
+            recoveryError = null,
+            recoveryErrorRes = null,
+            recoverySent = false,
+        )
+    }
+
+    fun setRecoveryEmail(value: String) {
+        _state.value = _state.value.copy(recoveryEmail = value, recoveryError = null, recoveryErrorRes = null)
+    }
+
+    fun setRecoveryReason(value: String) {
+        _state.value = _state.value.copy(recoveryReason = value, recoveryError = null, recoveryErrorRes = null)
+    }
+
+    fun submitRecovery(turnstileToken: String? = null) {
+        if (_state.value.recoverySubmitting) return
+        val email = _state.value.recoveryEmail.trim()
+        if (email.isEmpty() || !email.contains('@')) {
+            _state.value = _state.value.copy(
+                recoveryError = null,
+                recoveryErrorRes = R.string.login_recovery_email_required,
+            )
+            return
+        }
+        if (_state.value.turnstileEnabled && turnstileToken.isNullOrBlank()) {
+            _state.value = _state.value.copy(
+                recoveryError = null,
+                recoveryErrorRes = null,
+                turnstilePrompted = true,
+                turnstileAction = "recovery_request",
+            )
+            return
+        }
+        _state.value = _state.value.copy(
+            recoverySubmitting = true,
+            recoveryError = null,
+            recoveryErrorRes = null,
+            turnstilePrompted = false,
+        )
+        viewModelScope.launch {
+            try {
+                awaitTurnstileConfigIfPending()
+                if (_state.value.turnstileEnabled && turnstileToken.isNullOrBlank()) {
+                    _state.value = _state.value.copy(
+                        turnstilePrompted = true,
+                        turnstileAction = "recovery_request",
+                    )
+                    return@launch
+                }
+                container.publicFlow.recoveryRequest(
+                    email = email,
+                    reason = _state.value.recoveryReason.trim(),
+                    turnstileToken = turnstileToken,
+                )
+                _state.value = _state.value.copy(recoverySent = true, recoveryReason = "")
+            } catch (e: ApiException) {
+                if (e.code == "TURNSTILE_REQUIRED" && turnstileToken.isNullOrBlank() && fetchTurnstileConfig()) {
+                    _state.value = _state.value.copy(
+                        turnstilePrompted = true,
+                        turnstileAction = "recovery_request",
+                    )
+                } else {
+                    _state.value = _state.value.copy(recoveryError = e.message)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(recoveryError = e.message)
+            } finally {
+                _state.value = _state.value.copy(recoverySubmitting = false)
+            }
+        }
+    }
 
     fun dismissKeyInvalidatedNotice() { container.biometric.clearKeyInvalidatedNotice() }
 
@@ -161,6 +286,14 @@ class LoginViewModel(
         )
         viewModelScope.launch {
             try {
+                awaitTurnstileConfigIfPending()
+                if (_state.value.turnstileEnabled && turnstileToken.isNullOrBlank()) {
+                    _state.value = _state.value.copy(
+                        turnstilePrompted = true,
+                        turnstileAction = "biometric_login",
+                    )
+                    return@launch
+                }
                 when (
                     val res = container.auth.loginWithBiometric(
                         context = context,
@@ -170,7 +303,9 @@ class LoginViewModel(
                         cancelText = context.getString(R.string.common_cancel),
                     )
                 ) {
-                    is BiometricSignResult.Success,
+                    is BiometricSignResult.Success -> {
+                        container.biometric.clearKeyInvalidatedNotice()
+                    }
                     BiometricSignResult.Cancelled,
                     BiometricSignResult.KeyInvalidated -> {}
                     is BiometricSignResult.Error -> {
@@ -178,7 +313,16 @@ class LoginViewModel(
                     }
                 }
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(error = e.message)
+                if (e.code == "TURNSTILE_REQUIRED" && turnstileToken.isNullOrBlank() && fetchTurnstileConfig()) {
+                    _state.value = _state.value.copy(
+                        turnstilePrompted = true,
+                        turnstileAction = "biometric_login",
+                    )
+                } else {
+                    _state.value = _state.value.copy(error = e.message)
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.login_failed))
             } finally {
@@ -217,6 +361,14 @@ class LoginViewModel(
         )
         viewModelScope.launch {
             try {
+                awaitTurnstileConfigIfPending()
+                if (_state.value.turnstileEnabled && turnstileToken.isNullOrBlank()) {
+                    _state.value = _state.value.copy(
+                        turnstilePrompted = true,
+                        turnstileAction = "passkey_login",
+                    )
+                    return@launch
+                }
                 val start = container.auth.passkeyLoginStart(email, turnstileToken)
                 val manager = CredentialManager.create(context)
                 val request = GetCredentialRequest.Builder()
@@ -230,19 +382,29 @@ class LoginViewModel(
                 val credential = result.credential as? PublicKeyCredential
                     ?: throw IllegalStateException("Unexpected credential type")
                 container.auth.passkeyLoginFinish(start.challenge_id, credential.authenticationResponseJson)
+                container.biometric.clearKeyInvalidatedNotice()
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     container.secureStore.putString("last_email", email)
                 }
-            } catch (e: NoCredentialException) {
+            } catch (_: NoCredentialException) {
                 _state.value = _state.value.copy(noPasskeyHint = true)
             } catch (_: GetCredentialCancellationException) {
                 // User dismissed the passkey prompt cleanly.
             } catch (e: GetCredentialException) {
-                _state.value = _state.value.copy(error = e.message ?: "Sign-in cancelled")
+                _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.login_failed))
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(error = e.message)
+                if (e.code == "TURNSTILE_REQUIRED" && turnstileToken.isNullOrBlank() && fetchTurnstileConfig()) {
+                    _state.value = _state.value.copy(
+                        turnstilePrompted = true,
+                        turnstileAction = "passkey_login",
+                    )
+                } else {
+                    _state.value = _state.value.copy(error = e.message)
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _state.value = _state.value.copy(error = e.message ?: "Sign-in failed")
+                _state.value = _state.value.copy(error = e.message ?: context.getString(R.string.login_failed))
             } finally {
                 _state.value = _state.value.copy(signingIn = false)
             }
@@ -255,6 +417,7 @@ class LoginViewModel(
         viewModelScope.launch {
             try {
                 container.auth.devLogin(email)
+                container.biometric.clearKeyInvalidatedNotice()
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     container.secureStore.putString("last_email", email.trim())
                 }

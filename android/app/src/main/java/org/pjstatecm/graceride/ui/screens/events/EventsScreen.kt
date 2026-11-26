@@ -1,6 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.events
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -19,8 +20,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.AlertDialog
@@ -29,13 +35,16 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -43,10 +52,15 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,6 +68,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -160,20 +176,42 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                IconButton(onClick = { nav.navigate(AppRoute.Notifications) }) {
-                    BadgedBox(
-                        badge = {
-                            if (unreadCount > 0) {
-                                Badge {
-                                    Text(if (unreadCount > 99) "99+" else unreadCount.toString())
-                                }
-                            }
+                val unreadState = if (unreadCount > 0) {
+                    stringResource(R.string.notif_a11y_unread_count, unreadCount)
+                } else {
+                    null
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (canCreateEvent) {
+                        FilledTonalButton(
+                            onClick = { nav.navigate(AppRoute.EventNew()) },
+                            contentPadding = PaddingValues(horizontal = Spacing.sm, vertical = 4.dp),
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.event_create_btn), style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                    IconButton(
+                        onClick = { nav.navigate(AppRoute.Notifications) },
+                        modifier = Modifier.semantics {
+                            if (unreadState != null) stateDescription = unreadState
                         },
                     ) {
-                        Icon(
-                            Icons.Outlined.Notifications,
-                            contentDescription = stringResource(R.string.notif_title),
-                        )
+                        BadgedBox(
+                            badge = {
+                                if (unreadCount > 0) {
+                                    Badge {
+                                        Text(if (unreadCount > 99) "99+" else unreadCount.toString())
+                                    }
+                                }
+                            },
+                        ) {
+                            Icon(
+                                Icons.Outlined.Notifications,
+                                contentDescription = stringResource(R.string.notif_title),
+                            )
+                        }
                     }
                 }
             }
@@ -202,7 +240,7 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                 }
             }
             if (canCreateEvent) {
-                PrimaryScrollableTabRow(selectedTabIndex = state.tab, edgePadding = Spacing.xs) {
+                PrimaryScrollableTabRow(selectedTabIndex = state.tab.coerceIn(0, 3), edgePadding = Spacing.xs) {
                     tabItems()
                 }
             } else {
@@ -216,20 +254,16 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                 modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
             )
 
-            val viewMode = when {
-                state.loading -> "loading"
-                state.error != null && state.events.isEmpty() -> "error"
-                else -> "tab-${state.tab}"
+            val tabSnapshots = remember { mutableStateMapOf<Int, EventsUiState>() }
+            if (!state.loading) {
+                tabSnapshots[state.tab] = state
             }
 
             AnimatedContent(
-                targetState = viewMode,
+                targetState = state.tab,
                 transitionSpec = {
-                    val tabTransition = initialState.startsWith("tab-") && targetState.startsWith("tab-")
-                    if (tabTransition && animatorsEnabled()) {
-                        val fromTab = initialState.removePrefix("tab-").toIntOrNull() ?: 0
-                        val toTab = targetState.removePrefix("tab-").toIntOrNull() ?: 0
-                        val dir = if (toTab > fromTab) 1 else -1
+                    if (animatorsEnabled()) {
+                        val dir = if (targetState > initialState) 1 else -1
                         (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
                             fadeIn(tween(180)))
                             .togetherWith(
@@ -237,59 +271,81 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                                     fadeOut(tween(140)),
                             )
                     } else {
-                        fadeIn(tween(180)).togetherWith(fadeOut(tween(140)))
+                        fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
                     }
                 },
                 label = "events_tab",
                 modifier = Modifier.weight(1f),
-            ) { mode ->
-                when (mode) {
-                    "loading" -> SkeletonLoadingList(count = 4)
-                    "error" -> ErrorView(state.error ?: "", vm::refresh)
-                    "tab-1" -> MyScheduleContent(state, vm::refresh, { UiHaptics.tick(view); vm.selectDay(it) }, { vm.setTab(0) }, nav)
-                    "tab-3" -> ManagingContent(
-                        state = state,
-                        onRefresh = vm::refresh,
-                        onToggleHideDrafts = vm::toggleHideDrafts,
-                        onOpenEvent = { nav.navigate(AppRoute.EventDetail(it)) },
-                        onPublishClick = { pendingPublish = it },
-                        onUnpublishClick = { pendingUnpublish = it },
-                    )
-                    else -> {
-                        val isUpcomingTab = mode == "tab-0"
-                        val hasSignedUp = isUpcomingTab && state.events.any {
-                            it.mySignup?.status == "going" || it.mySignup?.status == "waitlist"
-                        }
-                        val visibleEvents = if (isUpcomingTab && onlyGoing && hasSignedUp) {
-                            state.events.filter { it.mySignup?.status == "going" || it.mySignup?.status == "waitlist" }
-                        } else {
-                            state.events
-                        }
-                        PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
-                            val bottomClearance = LocalBottomBarClearance.current
-                            LazyColumn(
-                                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                contentPadding = PaddingValues(top = Spacing.xs, bottom = Spacing.xs + bottomClearance),
-                            ) {
-                                if (hasSignedUp) {
-                                    item(key = "filter-going") {
-                                        FilterChip(
-                                            selected = onlyGoing,
-                                            onClick = { UiHaptics.tick(view); onlyGoing = !onlyGoing },
-                                            label = { Text(stringResource(R.string.events_filter_going)) },
-                                        )
-                                    }
+            ) { tab ->
+                val tabState = if (tab == state.tab) state else (tabSnapshots[tab] ?: state)
+                val innerMode = when {
+                    tabState.loading -> "loading"
+                    tabState.error != null && tabState.events.isEmpty() -> "error"
+                    else -> "content"
+                }
+                Crossfade(
+                    targetState = innerMode,
+                    animationSpec = tween(180),
+                    label = "events_tab_state_$tab",
+                ) { mode ->
+                    when (mode) {
+                        "loading" -> SkeletonLoadingList(count = 4)
+                        "error" -> ErrorView(tabState.error ?: "", onRetry = vm::refresh)
+                        else -> when (tab) {
+                            1 -> MyScheduleContent(tabState, vm::refresh, { UiHaptics.tick(view); vm.selectDay(it) }, { vm.setTab(0) }, nav)
+                            3 -> ManagingContent(
+                                state = tabState,
+                                onRefresh = vm::refresh,
+                                onToggleHideDrafts = vm::toggleHideDrafts,
+                                onOpenEvent = { nav.navigate(AppRoute.EventDetail(it)) },
+                                onPublishClick = { pendingPublish = it },
+                                onUnpublishClick = { pendingUnpublish = it },
+                            )
+                            else -> {
+                                val isUpcomingTab = tab == 0
+                                val hasSignedUp = isUpcomingTab && tabState.events.any {
+                                    it.mySignup?.status == "going" || it.mySignup?.status == "waitlist"
                                 }
-                                if (visibleEvents.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
-                                items(visibleEvents, key = { it.id }) { event ->
-                                    val needed = if (isUpcomingTab) state.requestsByEvent[event.id] ?: 0 else 0
-                                    EventCard(
-                                        event,
-                                        onClick = { nav.navigate(AppRoute.EventDetail(event.id)) },
-                                        modifier = Modifier.animateItem(),
-                                        ridesNeeded = needed,
-                                    )
+                                val visibleEvents = if (isUpcomingTab && onlyGoing && hasSignedUp) {
+                                    tabState.events.filter { it.mySignup?.status == "going" || it.mySignup?.status == "waitlist" }
+                                } else {
+                                    tabState.events
+                                }
+                                PullToRefreshBox(isRefreshing = tabState.refreshing, onRefresh = vm::refresh) {
+                                    val bottomClearance = LocalBottomBarClearance.current
+                                    LazyColumn(
+                                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        contentPadding = PaddingValues(top = Spacing.xs, bottom = Spacing.xs + bottomClearance),
+                                    ) {
+                                        if (hasSignedUp) {
+                                            item(key = "filter-going") {
+                                                FilterChip(
+                                                    selected = onlyGoing,
+                                                    onClick = { UiHaptics.tick(view); onlyGoing = !onlyGoing },
+                                                    label = { Text(stringResource(R.string.events_filter_going)) },
+                                                )
+                                            }
+                                        }
+                                        if (visibleEvents.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
+                                        items(visibleEvents, key = { it.id }) { event ->
+                                            val needed = if (isUpcomingTab) tabState.requestsByEvent[event.id] ?: 0 else 0
+                                            val unsigned = event.mySignup == null || event.mySignup.status == "cancelled"
+                                            val canQuickRsvp = isUpcomingTab &&
+                                                unsigned &&
+                                                event.status == "published" &&
+                                                (event.signupDeadline.isNullOrBlank() ||
+                                                    event.signupDeadline.take(16).replace('T', ' ') >= KlTime.nowStamp())
+                                            EventCard(
+                                                event,
+                                                onClick = { nav.navigate(AppRoute.EventDetail(event.id)) },
+                                                modifier = Modifier.animateItem(),
+                                                ridesNeeded = needed,
+                                                quickRsvpLabel = if (canQuickRsvp) stringResource(R.string.quick_rsvp_btn) else null,
+                                                onQuickRsvp = if (canQuickRsvp) ({ vm.openQuickRsvp(event) }) else null,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -335,6 +391,125 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                 TextButton(onClick = { pendingUnpublish = null }) { Text(stringResource(R.string.common_cancel)) }
             },
         )
+    }
+
+    val quickTarget = state.quickRsvpTarget
+    if (quickTarget != null) {
+        val scope = rememberCoroutineScope()
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        var selectedGroupId by remember(quickTarget.id, quickTarget.joinAs) {
+            mutableStateOf(quickTarget.joinAs.firstOrNull()?.id)
+        }
+        val joinedMsg = stringResource(R.string.quick_rsvp_joined)
+        val waitlistMsg = stringResource(R.string.quick_rsvp_waitlist)
+        val canRideCreate = currentMe?.can("rides", "create") == true
+        val canDriveCreate = currentMe?.can("drive", "create") == true
+
+        ModalBottomSheet(onDismissRequest = vm::dismissQuickRsvp, sheetState = sheetState) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = Spacing.sm)
+                    .padding(bottom = Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                Text(quickTarget.title, style = MaterialTheme.typography.titleLarge)
+                if (state.quickRsvpStep == "group") {
+                    if (state.quickRsvpLoading) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            InlineButtonSpinner()
+                            Text(stringResource(R.string.common_loading), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else {
+                        if (quickTarget.joinAs.isNotEmpty()) {
+                            Text(stringResource(R.string.event_join_as_group), style = MaterialTheme.typography.titleSmall)
+                            Column {
+                                quickTarget.joinAs.forEach { g ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedGroupId = g.id }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(
+                                            selected = selectedGroupId == g.id,
+                                            onClick = { selectedGroupId = g.id },
+                                        )
+                                        Text(g.name, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+                        state.quickRsvpError?.let { err ->
+                            Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                        Button(
+                            onClick = {
+                                vm.confirmQuickRsvp(
+                                    asGroupId = selectedGroupId,
+                                    onWaitlistDone = { status ->
+                                        scope.launch {
+                                            snackbar.showSnackbar(if (status == "waitlist") waitlistMsg else joinedMsg)
+                                        }
+                                    },
+                                    onJoinedNoTransport = {
+                                        scope.launch { snackbar.showSnackbar(joinedMsg) }
+                                    },
+                                )
+                            },
+                            enabled = !state.quickRsvpBusy && (quickTarget.joinAs.isEmpty() || selectedGroupId != null),
+                            colors = graceRidePrimaryButtonColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (state.quickRsvpBusy) {
+                                InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                            } else {
+                                val full = quickTarget.capacity > 0 && quickTarget.going >= quickTarget.capacity
+                                Text(stringResource(if (full) R.string.event_waitlist else R.string.event_signup))
+                            }
+                        }
+                    }
+                } else {
+                    Text(stringResource(R.string.quick_rsvp_transport_title), style = MaterialTheme.typography.titleSmall)
+                    if (canRideCreate) {
+                        Button(
+                            onClick = {
+                                val eid = quickTarget.id
+                                vm.dismissQuickRsvp()
+                                nav.navigate(AppRoute.RideNew(eventId = eid))
+                            },
+                            colors = graceRidePrimaryButtonColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(Spacing.xs))
+                            Text(stringResource(R.string.event_need_ride))
+                        }
+                    }
+                    if (canDriveCreate) {
+                        OutlinedButton(
+                            onClick = {
+                                val eid = quickTarget.id
+                                vm.dismissQuickRsvp()
+                                nav.navigate(AppRoute.EventDetail(eid))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.event_offer_drive))
+                        }
+                    }
+                    TextButton(
+                        onClick = vm::quickRsvpSelfTransport,
+                        enabled = !state.quickRsvpBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.event_going_own_way))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -669,7 +844,7 @@ private fun buildScheduleGroups(
         }
     }
 
-    dated.sortBy { it.sortAt }
+    dated.sortBy { KlTime.sortKey(it.sortAt) }
     val grouped = linkedMapOf<String, MutableList<TimelineNode>>()
     dated.forEach { item ->
         grouped.getOrPut(item.dayKey) { mutableListOf() }.add(item.node)

@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.TripRouteDto
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.notifications.RealtimeEvent
@@ -33,6 +34,7 @@ data class DriveHubUiState(
     val offline: Boolean = false,
     val accessDenied: Boolean = false,
     val error: String? = null,
+    val actionError: String? = null,
     val claimedNotice: Boolean = false,
 )
 
@@ -46,7 +48,7 @@ class DriveHubViewModel(private val container: AppContainer) : ViewModel() {
         load(first = true)
         viewModelScope.launch {
             container.realtimeStream.events.collect { ev ->
-                if (ev != RealtimeEvent.Resume) load(first = false)
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) load(first = false)
             }
         }
         viewModelScope.launch {
@@ -88,23 +90,29 @@ class DriveHubViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val from = KlTime.today()
                 val to = KlTime.todayPlusDays(14)
-                val (reqs, sched, routeResp) = coroutineScope {
+                val (reqs, sched, routeResult) = coroutineScope {
                     val reqDef = async { container.rides.driverRequests(mineOnly) }
                     val schedDef = async { container.rides.drivingToday(from, to) }
                     val routeDef = async {
-                        runCatching { container.rides.driverRoute().route }.getOrNull()
+                        runSuspendCatching { container.rides.driverRoute().route }
                     }
                     Triple(reqDef.await(), schedDef.await(), routeDef.await())
                 }
-                if (!LiveTripLocationService.isJourneyLive(routeResp) && LiveTripLocationService.isSharing.value) {
-                    container.appContext?.let { LiveTripLocationService.stop(it, notifyServer = false) }
+                val nextRoute = if (routeResult.isSuccess) {
+                    val fetched = routeResult.getOrNull()
+                    if (!LiveTripLocationService.isJourneyLive(fetched) && LiveTripLocationService.isSharing.value) {
+                        container.appContext?.let { LiveTripLocationService.stop(it, notifyServer = false) }
+                    }
+                    fetched
+                } else {
+                    _state.value.route
                 }
                 _state.value = _state.value.copy(
                     loading = false,
                     refreshing = false,
                     requests = reqs,
-                    schedule = sched.sortedBy { it.pickupAt },
-                    route = routeResp,
+                    schedule = sched.sortedWith(compareBy<Ride>({ KlTime.sortKey(it.pickupAt) }, { it.id })),
+                    route = nextRoute,
                     offline = false,
                     error = null,
                 )
@@ -121,14 +129,14 @@ class DriveHubViewModel(private val container: AppContainer) : ViewModel() {
 
     fun claim(rideId: Long) {
         if (_state.value.busyRideId != null) return
-        _state.value = _state.value.copy(busyRideId = rideId, error = null, claimedNotice = false)
+        _state.value = _state.value.copy(busyRideId = rideId, actionError = null, claimedNotice = false)
         viewModelScope.launch {
             try {
                 container.rides.claimRide(rideId)
                 _state.value = _state.value.copy(busyRideId = null, claimedNotice = true)
                 load(first = false)
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(busyRideId = null, error = e.message)
+                _state.value = _state.value.copy(busyRideId = null, actionError = e.message)
             }
         }
     }
@@ -139,6 +147,10 @@ class DriveHubViewModel(private val container: AppContainer) : ViewModel() {
 
     fun clearError() {
         _state.value = _state.value.copy(error = null)
+    }
+
+    fun clearActionError() {
+        _state.value = _state.value.copy(actionError = null)
     }
 
     companion object {

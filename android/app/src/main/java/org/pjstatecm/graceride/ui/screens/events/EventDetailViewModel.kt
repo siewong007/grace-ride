@@ -13,11 +13,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import org.pjstatecm.graceride.data.api.AdminUserDto
 import org.pjstatecm.graceride.data.api.ApiException
+import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.CheckinResp
+import org.pjstatecm.graceride.data.api.CreateVisitorPassReq
 import org.pjstatecm.graceride.data.api.EventItem
+import org.pjstatecm.graceride.data.api.EventSignupItemDto
+import org.pjstatecm.graceride.data.api.PostEventDriversDto
+import org.pjstatecm.graceride.data.api.PostEventReimbursementsReq
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.ScanMemberResp
+import org.pjstatecm.graceride.data.api.VisitorPassDto
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.notifications.RealtimeEvent
@@ -29,6 +36,15 @@ data class EventDetailUiState(
     val outboundRide: Ride? = null,
     val returnRide: Ride? = null,
     val drivingForEvent: List<Ride> = emptyList(),
+    val signups: List<EventSignupItemDto> = emptyList(),
+    val visitors: List<VisitorPassDto> = emptyList(),
+    val areas: List<Area> = emptyList(),
+    val driveRequests: List<Ride> = emptyList(),
+    val driveRequestsLoading: Boolean = false,
+    val walkInCandidates: List<AdminUserDto> = emptyList(),
+    val postEventDrivers: PostEventDriversDto? = null,
+    val postEventOpen: Boolean = false,
+    val visitorSharePair: Pair<String, String>? = null,
     val error: String? = null,
     val busy: Boolean = false,
     val message: String? = null,
@@ -47,7 +63,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         load()
         viewModelScope.launch {
             container.realtimeStream.events.collect { ev ->
-                if (ev != RealtimeEvent.Resume) refresh()
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) refresh()
             }
         }
         viewModelScope.launch {
@@ -127,7 +143,38 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
                 }
                 outbound = ridesPair.first
                 returnRide = ridesPair.second
-                driving = drivingRes
+                driving = drivingRes.sortedBy { KlTime.sortKey(it.pickupAt) }
+            }
+
+            val signupsList = if (event.canSeeSignups) {
+                try {
+                    container.events.signups(id)
+                } catch (_: ApiException) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            val canVisitorSection = event.status == "published" &&
+                (event.mySignup?.status == "going" || event.canManage) &&
+                container.auth.me?.can("rides", "create") == true
+            val visitorsList = if (canVisitorSection) {
+                try {
+                    container.events.visitors(id)
+                } catch (_: ApiException) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            val areasList = if (canVisitorSection) {
+                try {
+                    container.rides.areas()
+                } catch (_: ApiException) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
             }
 
             _state.value = _state.value.copy(
@@ -137,6 +184,9 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
                 outboundRide = outbound,
                 returnRide = returnRide,
                 drivingForEvent = driving,
+                signups = signupsList,
+                visitors = visitorsList,
+                areas = areasList,
                 error = null,
             )
         } catch (e: ApiException) {
@@ -144,12 +194,35 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         }
     }
 
-    fun signup(needRide: Boolean, offerDrive: Boolean, asGroupId: Long?, offerSeats: Int? = null) {
+    fun signup(
+        needRide: Boolean,
+        offerDrive: Boolean,
+        asGroupId: Long?,
+        offerSeats: Int? = null,
+        selfTransport: Boolean? = null,
+    ) {
         if (_state.value.busy) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busy = true, message = null)
         viewModelScope.launch {
             try {
-                container.events.signup(id, needRide, offerDrive, asGroupId, offerSeats)
+                container.events.signup(id, needRide, offerDrive, asGroupId, offerSeats, selfTransport)
+                reloadDetail()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun setTransport(selfTransport: Boolean) {
+        if (_state.value.busy) return
+        loadJob?.cancel()
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.events.setSelfTransport(id, selfTransport)
                 reloadDetail()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
@@ -161,6 +234,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
 
     fun withdraw() {
         if (_state.value.busy) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busy = true, message = null)
         viewModelScope.launch {
             try {
@@ -176,6 +250,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
 
     fun publish() {
         if (_state.value.busy) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busy = true, message = null, actionNotice = null)
         viewModelScope.launch {
             try {
@@ -192,6 +267,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
 
     fun unpublish() {
         if (_state.value.busy) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busy = true, message = null, actionNotice = null)
         viewModelScope.launch {
             try {
@@ -208,6 +284,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
 
     fun selfCheckin(code: String?) {
         if (_state.value.busy) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busy = true, message = null, checkinError = null, checkinResult = null)
         viewModelScope.launch {
             try {
@@ -225,6 +302,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
     fun scanMemberPass(passCode: String) {
         val clean = passCode.trim()
         if (_state.value.busy || clean.isEmpty()) return
+        loadJob?.cancel()
         _state.value = _state.value.copy(busy = true, message = null, checkinError = null, scanMemberResult = null)
         viewModelScope.launch {
             try {
@@ -247,6 +325,202 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
 
     fun clearCheckinResults() {
         _state.value = _state.value.copy(checkinResult = null, scanMemberResult = null, checkinError = null)
+    }
+
+    fun dismissVisitorShare() {
+        _state.value = _state.value.copy(visitorSharePair = null)
+    }
+
+    fun finishEvent(doneMsg: String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.events.finish(id)
+                reloadDetail()
+                _state.value = _state.value.copy(message = doneMsg)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun cancelEvent(doneMsg: String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.events.cancel(id)
+                reloadDetail()
+                _state.value = _state.value.copy(message = doneMsg)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun resetCheckinCode(doneMsg: String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val res = container.events.resetCheckinCode(id)
+                _state.value = _state.value.copy(
+                    event = _state.value.event?.copy(checkinCode = res.checkinCode),
+                    message = doneMsg,
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun markAttendance(userId: Long, attended: Boolean?) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.events.markAttendance(id, userId, attended)
+                reloadDetail()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun searchWalkInMembers(query: String) {
+        viewModelScope.launch {
+            val res = container.admin.users(
+                q = query.trim().takeIf { it.isNotEmpty() },
+                status = "active",
+                limit = 15,
+            )
+            res.onSuccess { page ->
+                _state.value = _state.value.copy(walkInCandidates = page.items)
+            }
+        }
+    }
+
+    fun createVisitor(req: CreateVisitorPassReq) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val res = container.events.createVisitor(id, req)
+                reloadDetail()
+                _state.value = _state.value.copy(visitorSharePair = req.name to container.webUrl(res.url))
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun reissueVisitor(pass: VisitorPassDto) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val res = container.events.reissueVisitor(pass.id)
+                reloadDetail()
+                _state.value = _state.value.copy(visitorSharePair = pass.name to container.webUrl(res.url))
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun revokeVisitor(passId: Long) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.events.revokeVisitor(passId)
+                reloadDetail()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun loadDriveRequests() {
+        _state.value = _state.value.copy(driveRequestsLoading = true)
+        viewModelScope.launch {
+            try {
+                val list = container.rides.driverRequests(eventId = id)
+                _state.value = _state.value.copy(driveRequests = list, driveRequestsLoading = false)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(driveRequestsLoading = false, message = e.message)
+            }
+        }
+    }
+
+    fun claimDriveRequest(rideId: Long, doneMsg: String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.rides.claimRide(rideId)
+                val list = container.rides.driverRequests(eventId = id)
+                reloadDetail()
+                _state.value = _state.value.copy(driveRequests = list, message = doneMsg)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun openPostEventReimb() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val resp = container.events.postEventDrivers(id)
+                _state.value = _state.value.copy(postEventDrivers = resp, postEventOpen = true)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun closePostEventReimb() {
+        _state.value = _state.value.copy(postEventOpen = false)
+    }
+
+    fun submitPostEventReimb(req: PostEventReimbursementsReq, formatDone: (Int, Long) -> String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val resp = container.events.createPostEventReimbursements(id, req)
+                reloadDetail()
+                _state.value = _state.value.copy(
+                    postEventOpen = false,
+                    message = formatDone(resp.createdCount, resp.totalCents),
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
     }
 
     companion object {

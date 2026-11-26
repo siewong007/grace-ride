@@ -37,7 +37,7 @@ class RidesViewModel(private val container: AppContainer) : ViewModel() {
         load(first = true)
         viewModelScope.launch {
             container.realtimeStream.events.collect { ev ->
-                if (ev != RealtimeEvent.Resume) refresh()
+                if (ev != RealtimeEvent.Resume && ev != RealtimeEvent.Chat) refresh()
             }
         }
         viewModelScope.launch {
@@ -63,13 +63,13 @@ class RidesViewModel(private val container: AppContainer) : ViewModel() {
                 val cached = withContext(Dispatchers.IO) {
                     container.offlineCache.read(uid, cacheKey, ListSerializer(Ride.serializer()))
                 }
-                if (cached != null && _state.value.rides.isEmpty()) {
+                if (cached != null && _state.value.rides.isEmpty() && _state.value.tab == tab) {
                     _state.value = _state.value.copy(
                         loading = false,
                         refreshing = true,
                         rides = cached.data,
                     )
-                } else {
+                } else if (_state.value.tab == tab) {
                     _state.value = _state.value.copy(loading = true, refreshing = false)
                 }
             } else {
@@ -85,13 +85,17 @@ class RidesViewModel(private val container: AppContainer) : ViewModel() {
                         container.offlineCache.write(uid, cacheKey, rides, ListSerializer(Ride.serializer()))
                     }
                 }
-                _state.value = _state.value.copy(loading = false, refreshing = false, rides = rides, error = null, offline = false)
+                if (_state.value.tab == tab) {
+                    _state.value = _state.value.copy(loading = false, refreshing = false, rides = rides, error = null, offline = false)
+                }
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(
-                    loading = false, refreshing = false,
-                    error = if (e.status == 0) null else e.message,
-                    offline = e.status == 0,
-                )
+                if (_state.value.tab == tab) {
+                    _state.value = _state.value.copy(
+                        loading = false, refreshing = false,
+                        error = if (e.status == 0) null else e.message,
+                        offline = e.status == 0,
+                    )
+                }
             }
         }
     }

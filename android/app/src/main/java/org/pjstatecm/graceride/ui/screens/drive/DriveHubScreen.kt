@@ -105,6 +105,8 @@ import org.pjstatecm.graceride.ui.theme.tabular
 fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
     val vm: DriveHubViewModel = viewModel(factory = DriveHubViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
     val sharingLocation by LiveTripLocationService.isSharing.collectAsStateWithLifecycle()
     val nearDestinationTripId by LiveTripLocationService.nearDestinationTripId.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -157,9 +159,16 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
             vm.clearClaimedNotice()
         }
     }
-    LaunchedEffect(state.error) {
-        state.error?.let {
+    LaunchedEffect(state.actionError) {
+        state.actionError?.let {
             snackbar.showSnackbar(it)
+            vm.clearActionError()
+        }
+    }
+    LaunchedEffect(state.error, state.requests.isEmpty(), state.schedule.isEmpty()) {
+        val err = state.error
+        if (err != null && (state.requests.isNotEmpty() || state.schedule.isNotEmpty())) {
+            snackbar.showSnackbar(err)
             vm.clearError()
         }
     }
@@ -229,7 +238,7 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
             when {
                 state.loading -> SkeletonLoadingList(count = 4)
                 state.error != null && state.requests.isEmpty() && state.schedule.isEmpty() ->
-                    ErrorView(state.error ?: "", vm::refresh)
+                    ErrorView(state.error ?: "", onRetry = vm::refresh)
                 else -> PullToRefreshBox(
                     isRefreshing = state.refreshing,
                     onRefresh = vm::refresh,
@@ -257,7 +266,7 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
                                 requests = state.requests,
                                 mineAreasOnly = state.mineAreasOnly,
                                 busyRideId = state.busyRideId,
-                                canClaim = container.auth.me?.can("drive", "create") == true,
+                                canClaim = me?.can("drive", "create") == true,
                                 onToggleFilter = { UiHaptics.tick(view); vm.toggleMineAreas() },
                                 onClaim = { rideId -> UiHaptics.confirm(view); vm.claim(rideId) },
                                 onOpen = { rideId -> nav.navigate(AppRoute.RideDetail(rideId)) },
@@ -620,9 +629,10 @@ private fun RouteTab(
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        val seatsLabel = "${stringResource(R.string.ride_seats)}: ${stop.seats}"
                         val distLabel = stop.distanceM?.let { m ->
                             if (m >= 1000) String.format(java.util.Locale.US, "%.1f km", m / 1000.0) else "${m.toInt()} m"
-                        } ?: "${stop.seats} seat(s)"
+                        } ?: seatsLabel
                         Text(distLabel, style = MaterialTheme.typography.bodySmall.tabular(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(onClick = { onNavigate(stop.lat, stop.lng, stop.address) }) {
                             Icon(Icons.Outlined.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))

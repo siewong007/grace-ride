@@ -36,12 +36,15 @@ import org.pjstatecm.graceride.data.api.RideLocationDto
 import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.SavedPlaceReq
 import org.pjstatecm.graceride.data.api.SelectVehicleRes
+import org.pjstatecm.graceride.data.api.SupperChoiceReq
 import org.pjstatecm.graceride.data.api.WithdrawReq
 import org.pjstatecm.graceride.data.api.apiCall
+import java.util.concurrent.atomic.AtomicLong
 
 class RidesRepository(private val apiProvider: ApiProvider, private val bus: AuthEventBus) {
     private val api: ApiService get() = apiProvider.get()
     private val areasMutex = Mutex()
+    private val areasGeneration = AtomicLong(0L)
     @Volatile private var cachedAreas: List<Area>? = null
     @Volatile private var areasFetchedAtMs: Long = 0L
 
@@ -57,23 +60,27 @@ class RidesRepository(private val apiProvider: ApiProvider, private val bus: Aut
     suspend fun areas(forceRefresh: Boolean = false): List<Area> {
         val now = System.currentTimeMillis()
         val cached = cachedAreas
-        if (!forceRefresh && cached != null && (now - areasFetchedAtMs) < AREAS_TTL_MS) {
+        if (!forceRefresh && cached != null && (now - areasFetchedAtMs) in 0 until AREAS_TTL_MS) {
             return cached
         }
         return areasMutex.withLock {
             val recheckNow = System.currentTimeMillis()
             val lockedCached = cachedAreas
-            if (!forceRefresh && lockedCached != null && (recheckNow - areasFetchedAtMs) < AREAS_TTL_MS) {
+            if (!forceRefresh && lockedCached != null && (recheckNow - areasFetchedAtMs) in 0 until AREAS_TTL_MS) {
                 return@withLock lockedCached
             }
+            val gen = areasGeneration.get()
             apiCall(bus) { api.areas() }.also { fresh ->
-                cachedAreas = fresh
-                areasFetchedAtMs = System.currentTimeMillis()
+                if (areasGeneration.get() == gen) {
+                    cachedAreas = fresh
+                    areasFetchedAtMs = System.currentTimeMillis()
+                }
             }
         }
     }
 
     fun clearAreasCache() {
+        areasGeneration.incrementAndGet()
         cachedAreas = null
         areasFetchedAtMs = 0L
     }
@@ -95,13 +102,21 @@ class RidesRepository(private val apiProvider: ApiProvider, private val bus: Aut
     suspend fun startRide(id: Long) = apiCall(bus) { api.startRide(id) }
     suspend fun arrivedGate(id: Long) = apiCall(bus) { api.arrivedGate(id) }
     suspend fun pickupRide(id: Long) = apiCall(bus) { api.pickupRide(id) }
+    suspend fun noShowRide(id: Long) = apiCall(bus) { api.noShowRide(id) }
     suspend fun completeRide(id: Long) = apiCall(bus) { api.completeRide(id) }
+    suspend fun supperChoice(id: Long, choice: String) = apiCall(bus) { api.supperChoice(id, SupperChoiceReq(choice)) }
     suspend fun driverDelay(id: Long, minutes: Int) = apiCall(bus) { api.driverDelay(id, DriverDelayReq(minutes)) }
     suspend fun withdrawRide(id: Long, reason: String?) = apiCall(bus) { api.withdrawRide(id, WithdrawReq(reason)) }
     suspend fun drivingToday(from: String, to: String): List<Ride> =
         apiCall(bus) { api.driverSchedule(from, to) }
-    suspend fun driverRequests(mineAreas: Boolean? = null): List<Ride> =
-        apiCall(bus) { api.driverRequests(mineAreas) }
+    suspend fun driverRequests(
+        mineAreas: Boolean? = null,
+        eventId: Long? = null,
+        areaId: Long? = null,
+        date: String? = null,
+    ): List<Ride> = apiCall(bus) {
+        api.driverRequests(mineAreas = mineAreas, eventId = eventId, areaId = areaId, date = date)
+    }
     suspend fun claimRide(id: Long) = apiCall(bus) { api.claimRide(id) }
     suspend fun driverRoute(): DriverRouteResp = apiCall(bus) { api.driverRoute() }
     suspend fun postDriverLocation(lat: Double, lng: Double, heading: Double? = null): LocationShareResp =

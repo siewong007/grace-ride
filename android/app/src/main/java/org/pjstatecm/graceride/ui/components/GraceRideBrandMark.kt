@@ -30,6 +30,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -149,7 +151,7 @@ fun GraceRideBrandMark(
     var ripplesStarted by remember(shouldAnimate, mode, showRipples) { mutableStateOf(false) }
     var idleStarted by remember(shouldAnimate, mode) { mutableStateOf(false) }
 
-    LaunchedEffect(shouldAnimate, wantContinuousRipples, wantIdleHop) {
+    LaunchedEffect(shouldAnimate, mode, wantContinuousRipples, wantIdleHop) {
         if (!shouldAnimate) {
             crossProgress.snapTo(1f)
             groundProgress.snapTo(1f)
@@ -225,6 +227,7 @@ fun GraceRideBrandMark(
     val drawCache = remember { BrandMarkDrawCache() }
 
     Canvas(modifier = modifier) {
+        if (size.width <= 0f || size.height <= 0f) return@Canvas
         drawCache.sync(size.width, size.height)
         val s = drawCache.s
         val ox = drawCache.ox
@@ -360,9 +363,9 @@ fun GraceRideBrandMark(
 /** Two-tone "Grace Ride" wordmark rendered as a single semantic Text node. */
 @Composable
 fun GraceRideWordmark(
+    modifier: Modifier = Modifier,
     fontSize: TextUnit = 36.sp,
     darkTheme: Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f,
-    modifier: Modifier = Modifier,
 ) {
     val graceColor = if (darkTheme) Color.White else BrandRed
     val rideColor = if (darkTheme) Color.White else GrPrimary
@@ -393,7 +396,8 @@ fun GraceRideLandingSplash(
     onFinished: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shouldAnimate = remember { animatorsEnabled() }
+    val shouldAnimate = animatorsEnabled()
+    val currentOnFinished by rememberUpdatedState(onFinished)
     val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val wordAlpha = remember(shouldAnimate) { Animatable(if (shouldAnimate) 0f else 1f) }
     val tagAlpha = remember(shouldAnimate) { Animatable(if (shouldAnimate) 0f else 1f) }
@@ -417,16 +421,18 @@ fun GraceRideLandingSplash(
     }
 
     LaunchedEffect(visible, shouldAnimate) {
-        if (!visible) {
+        if (visible) {
+            exitProgress.snapTo(0f)
+        } else {
             if (shouldAnimate) {
                 exitProgress.animateTo(1f, tween(durationMillis = 280, easing = BrandExitEasing))
+            } else {
+                exitProgress.snapTo(1f)
             }
-            onFinished()
+            currentOnFinished()
         }
     }
 
-    val exitAlpha = 1f - exitProgress.value
-    val exitScale = 1f - 0.03f * exitProgress.value
     val a11yLoading = stringResource(R.string.splash_loading_a11y)
     val mutedColor = if (darkTheme) Color(0xFFA3A3A3) else Color(0xFF5F636A)
     val churchBlue = if (darkTheme) Color.White else GrPrimary
@@ -436,12 +442,21 @@ fun GraceRideLandingSplash(
         modifier = modifier
             .fillMaxSize()
             .graphicsLayer {
-                alpha = exitAlpha
-                translationY = -28.dp.toPx() * exitProgress.value
-                scaleX = exitScale
-                scaleY = exitScale
+                val p = if (!visible && !shouldAnimate) 1f else exitProgress.value
+                val scale = 1f - 0.03f * p
+                alpha = (1f - p).coerceIn(0f, 1f)
+                translationY = -28.dp.toPx() * p
+                scaleX = scale
+                scaleY = scale
             }
             .background(MaterialTheme.colorScheme.background)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            }
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = Spacing.lg, vertical = Spacing.xl)

@@ -125,7 +125,12 @@ class ComposeUiTest {
     }
 
     @Test fun loginScreenRendersPasskeyButton() {
-        server.enqueue(MockResponse().setBody("[]")) // dev users
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/auth/turnstile" -> MockResponse().setBody("""{"enabled":false}""")
+                else -> MockResponse().setBody("[]")
+            }
+        }
         compose.setContent {
             GraceRideTheme { LoginScreen(container) }
         }
@@ -134,9 +139,13 @@ class ComposeUiTest {
     }
 
     @Test fun loginScreenListsDevAccounts() {
-        server.enqueue(
-            MockResponse().setBody("""[{"name":"Demo Member","email":"member@example.org","roles":"member"}]""")
-        )
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/auth/turnstile" -> MockResponse().setBody("""{"enabled":false}""")
+                "/api/auth/dev-users" -> MockResponse().setBody("""[{"name":"Demo Member","email":"member@example.org","roles":"member"}]""")
+                else -> MockResponse().setBody("[]")
+            }
+        }
         compose.setContent {
             GraceRideTheme { LoginScreen(container) }
         }
@@ -258,7 +267,12 @@ class ComposeUiTest {
     }
 
     @Test fun loginScreenShowsDirectBiometricButtonWhenEnrolled() {
-        server.enqueue(MockResponse().setBody("[]")) // dev users
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/auth/turnstile" -> MockResponse().setBody("""{"enabled":false}""")
+                else -> MockResponse().setBody("[]")
+            }
+        }
         container.biometric.saveEnrollment(
             BiometricEnrollment(
                 id = 1L,

@@ -1,114 +1,21 @@
 package org.pjstatecm.graceride.ui.screens.events
 
-
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.CalendarToday
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.DirectionsCar
-import androidx.compose.material.icons.outlined.Map
-import androidx.compose.material.icons.outlined.People
-import androidx.compose.material.icons.outlined.Place
-import androidx.compose.material.icons.outlined.QrCode2
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
-import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.MySignup
 import org.pjstatecm.graceride.data.api.Ride
-import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.domain.RideStatusKind
-import org.pjstatecm.graceride.ui.Routes
-import org.pjstatecm.graceride.ui.UiHaptics
-import org.pjstatecm.graceride.ui.components.DetailSkeleton
-import org.pjstatecm.graceride.ui.components.ErrorView
-import org.pjstatecm.graceride.ui.components.EventIcon
-import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
-import org.pjstatecm.graceride.ui.components.ScheduleTimeline
-import org.pjstatecm.graceride.ui.components.StatusPill
 import org.pjstatecm.graceride.ui.components.TimelineBadge
 import org.pjstatecm.graceride.ui.components.TimelineKind
 import org.pjstatecm.graceride.ui.components.TimelineNode
 import org.pjstatecm.graceride.ui.components.TimelineState
-import org.pjstatecm.graceride.ui.copyToClipboard
-import org.pjstatecm.graceride.ui.openInMaps
-import org.pjstatecm.graceride.ui.openInWebApp
-import org.pjstatecm.graceride.ui.theme.LocalStatusColors
-import org.pjstatecm.graceride.ui.theme.Spacing
-import org.pjstatecm.graceride.ui.theme.tabular
 
 @Composable
 internal fun InfoRow(label: String, value: String) {
@@ -142,8 +49,7 @@ internal fun buildEventWorkflowNodes(
     val nodes = mutableListOf<TimelineNode>()
 
     if (!isLiveOrFuture) {
-        appendTransportTimelineNodes(
-            nodes = nodes,
+        return buildTransportTimelineNodes(
             event = event,
             outboundRide = outboundRide,
             returnRide = returnRide,
@@ -151,7 +57,6 @@ internal fun buildEventWorkflowNodes(
             doneAll = true,
             onOpenRide = onOpenRide,
         )
-        return nodes
     }
 
     if (signup == null) {
@@ -265,8 +170,7 @@ internal fun buildEventWorkflowNodes(
         return nodes
     }
 
-    appendTransportTimelineNodes(
-        nodes = nodes,
+    nodes += buildTransportTimelineNodes(
         event = event,
         outboundRide = outboundRide,
         returnRide = returnRide,
@@ -274,25 +178,38 @@ internal fun buildEventWorkflowNodes(
         doneAll = false,
         onOpenRide = onOpenRide,
     )
+    if (event.attendanceEnabled) {
+        val attended = signup.attended == true
+        nodes += TimelineNode(
+            id = "wf-checkin",
+            timeLabel = stringResource(R.string.event_workflow_at_venue),
+            title = stringResource(R.string.event_workflow_checkin_title),
+            subtitle = if (attended) null else stringResource(R.string.event_workflow_checkin_hint),
+            kind = TimelineKind.CHECKIN,
+            state = if (attended) TimelineState.DONE else TimelineState.UPCOMING,
+            badge = if (attended) TimelineBadge(stringResource(R.string.event_status_attended), RideStatusKind.ACTIVE) else null,
+        )
+    }
     return nodes
 }
 
 @Composable
-internal fun appendTransportTimelineNodes(
-    nodes: MutableList<TimelineNode>,
+internal fun buildTransportTimelineNodes(
     event: EventItem,
     outboundRide: Ride?,
     returnRide: Ride?,
     drivingForEvent: List<Ride>,
     doneAll: Boolean,
     onOpenRide: (Long) -> Unit,
-) {
+): List<TimelineNode> {
+    val nodes = mutableListOf<TimelineNode>()
+    val eventKey = KlTime.sortKey(event.startsAt)
     val preDrives = drivingForEvent
-        .filter { it.leg != "return" && it.pickupAt <= event.startsAt }
-        .sortedBy { it.pickupAt }
+        .filter { it.leg != "return" && KlTime.sortKey(it.pickupAt) <= eventKey }
+        .sortedBy { KlTime.sortKey(it.pickupAt) }
     val postDrives = drivingForEvent
-        .filter { it.leg == "return" || it.pickupAt > event.startsAt }
-        .sortedBy { it.pickupAt }
+        .filter { it.leg == "return" || KlTime.sortKey(it.pickupAt) > eventKey }
+        .sortedBy { KlTime.sortKey(it.pickupAt) }
 
     val outboundRef = event.myRide?.takeIf { it.id != event.myReturnRide?.id }
     outboundRef?.let { ref ->
@@ -305,6 +222,16 @@ internal fun appendTransportTimelineNodes(
             state = if (doneAll || ref.status == "completed") TimelineState.DONE else TimelineState.ACTIVE,
             badge = TimelineBadge(stringResource(RideStatus.labelRes(ref.status)), RideStatus.kind(ref.status)),
             onClick = { onOpenRide(ref.id) },
+        )
+    }
+
+    if (event.mySignup?.selfTransport == true && outboundRef == null && preDrives.isEmpty()) {
+        nodes += TimelineNode(
+            id = "wf-self-transport",
+            timeLabel = stringResource(R.string.event_workflow_before),
+            title = stringResource(R.string.event_going_own_way),
+            kind = TimelineKind.RIDE,
+            state = if (doneAll) TimelineState.DONE else TimelineState.ACTIVE,
         )
     }
 
@@ -374,4 +301,5 @@ internal fun appendTransportTimelineNodes(
             onClick = { onOpenRide(retRef.id) },
         )
     }
+    return nodes
 }

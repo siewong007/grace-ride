@@ -11,6 +11,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ import java.security.InvalidKeyException
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.ProviderException
 import java.security.SecureRandom
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
@@ -113,14 +115,14 @@ class AndroidBiometricCryptoDriver : BiometricCryptoDriver {
     ): BiometricSignResult {
         val activity = context.findFragmentActivity()
             ?: return BiometricSignResult.Error("Biometric prompt requires an active screen")
-        val keyPair = try {
+        val (keyPair, usedAttestation) = try {
             withContext(Dispatchers.IO) {
                 deleteKey()
                 val kpg = KeyPairGenerator.getInstance(
                     KeyProperties.KEY_ALGORITHM_EC,
                     ANDROID_KEYSTORE,
                 )
-                fun buildSpec(strongBox: Boolean): KeyGenParameterSpec = KeyGenParameterSpec.Builder(
+                fun buildSpec(strongBox: Boolean, withAttestation: Boolean): KeyGenParameterSpec = KeyGenParameterSpec.Builder(
                     KEY_ALIAS,
                     KeyProperties.PURPOSE_SIGN,
                 )
@@ -135,39 +137,50 @@ class AndroidBiometricCryptoDriver : BiometricCryptoDriver {
                                 KeyProperties.AUTH_BIOMETRIC_STRONG,
                             )
                         }
-                        if (attestationChallenge != null && attestationChallenge.isNotEmpty()) {
+                        if (withAttestation && attestationChallenge != null && attestationChallenge.isNotEmpty()) {
                             setAttestationChallenge(attestationChallenge)
                         }
-                        if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        if (strongBox) {
                             setIsStrongBoxBacked(true)
                         }
                     }
                     .build()
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val wantAttestation = attestationChallenge != null && attestationChallenge.isNotEmpty()
+                try {
+                    kpg.initialize(buildSpec(strongBox = true, withAttestation = wantAttestation))
+                    kpg.generateKeyPair() to wantAttestation
+                } catch (e: Exception) {
+                    if (e !is GeneralSecurityException && e !is ProviderException) throw e
                     try {
-                        kpg.initialize(buildSpec(strongBox = true))
-                        kpg.generateKeyPair()
-                    } catch (_: android.security.keystore.StrongBoxUnavailableException) {
-                        kpg.initialize(buildSpec(strongBox = false))
-                        kpg.generateKeyPair()
+                        kpg.initialize(buildSpec(strongBox = false, withAttestation = wantAttestation))
+                        kpg.generateKeyPair() to wantAttestation
+                    } catch (e2: Exception) {
+                        if (!wantAttestation || (e2 !is GeneralSecurityException && e2 !is ProviderException)) {
+                            throw e2
+                        }
+                        kpg.initialize(buildSpec(strongBox = false, withAttestation = false))
+                        kpg.generateKeyPair() to false
                     }
-                } else {
-                    kpg.initialize(buildSpec(strongBox = false))
-                    kpg.generateKeyPair()
                 }
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
             return BiometricSignResult.Error(e.message ?: "Could not create biometric hardware key")
         }
 
-        val attestationChain = withContext(Dispatchers.IO) {
-            runCatching {
-                val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-                ks.getCertificateChain(KEY_ALIAS)?.map {
-                    Base64.getEncoder().encodeToString(it.encoded)
-                }
-            }.getOrNull()
+        val attestationChain = if (usedAttestation) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+                    ks.getCertificateChain(KEY_ALIAS)?.map {
+                        Base64.getEncoder().encodeToString(it.encoded)
+                    }
+                }.getOrNull()
+            }
+        } else {
+            null
         }
 
         val signature = try {
@@ -258,8 +271,12 @@ class AndroidBiometricCryptoDriver : BiometricCryptoDriver {
             } else {
                 BiometricSignResult.Error("Hardware biometric verification failed")
             }
-        } catch (e: GeneralSecurityException) {
-            BiometricSignResult.Error(e.message ?: "Hardware biometric verification failed")
+        } catch (e: Exception) {
+            if (e is GeneralSecurityException || e is ProviderException) {
+                BiometricSignResult.Error(e.message ?: "Hardware biometric verification failed")
+            } else {
+                throw e
+            }
         }
     }
 
@@ -304,7 +321,8 @@ class AndroidBiometricCryptoDriver : BiometricCryptoDriver {
                         } catch (_: KeyPermanentlyInvalidatedException) {
                             deleteKey()
                             cont.resume(BiometricSignResult.KeyInvalidated)
-                        } catch (e: GeneralSecurityException) {
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
                             cont.resume(BiometricSignResult.Error(e.message ?: "Biometric signing failed"))
                         }
                     }
@@ -334,7 +352,14 @@ class AndroidBiometricCryptoDriver : BiometricCryptoDriver {
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 .build()
             cont.invokeOnCancellation { runCatching { prompt.cancelAuthentication() } }
-            prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
+            try {
+                prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (cont.isActive) {
+                    cont.resume(BiometricSignResult.Error(e.message ?: "Biometric prompt failed"))
+                }
+            }
         }
     }
 
@@ -350,6 +375,8 @@ class BiometricAuthManager(
     val driver: BiometricCryptoDriver = AndroidBiometricCryptoDriver(),
     private val clockMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
+    private val storeLock = Any()
+
     @Volatile
     private var loaded: Boolean = store !is org.pjstatecm.graceride.data.session.EncryptedPrefsStore
 
@@ -371,40 +398,51 @@ class BiometricAuthManager(
     fun availability(context: Context?): BiometricAvailability = driver.availability(context)
 
     fun ensureLoaded() {
-        if (!loaded) {
+        if (loaded) return
+        synchronized(storeLock) {
+            if (!loaded) {
+                _enrollment.value = loadEnrollmentFromStore()
+                loaded = true
+            }
+        }
+    }
+
+    fun reloadFromStore() {
+        synchronized(storeLock) {
             _enrollment.value = loadEnrollmentFromStore()
             loaded = true
         }
     }
 
-    fun reloadFromStore() {
-        _enrollment.value = loadEnrollmentFromStore()
-        loaded = true
-    }
-
     fun saveEnrollment(enrollment: BiometricEnrollment) {
-        store.putString(ENROLLMENT_KEY, apiJson.encodeToString(BiometricEnrollment.serializer(), enrollment))
-        _enrollment.value = enrollment
-        loaded = true
-        _pendingOptInUserId.value = null
-        _keyInvalidatedNotice.value = false
+        synchronized(storeLock) {
+            store.putString(ENROLLMENT_KEY, apiJson.encodeToString(BiometricEnrollment.serializer(), enrollment))
+            _enrollment.value = enrollment
+            loaded = true
+            _pendingOptInUserId.value = null
+            _keyInvalidatedNotice.value = false
+        }
     }
 
     fun clearEnrollmentLocal() {
-        driver.deleteKey()
-        store.remove(ENROLLMENT_KEY)
-        _enrollment.value = null
-        loaded = true
-        _appUnlocked.value = false
+        synchronized(storeLock) {
+            driver.deleteKey()
+            store.remove(ENROLLMENT_KEY)
+            _enrollment.value = null
+            loaded = true
+            _appUnlocked.value = false
+        }
     }
 
     fun handleKeyInvalidated() {
-        driver.deleteKey()
-        store.remove(ENROLLMENT_KEY)
-        _enrollment.value = null
-        loaded = true
-        _appUnlocked.value = false
-        _keyInvalidatedNotice.value = true
+        synchronized(storeLock) {
+            driver.deleteKey()
+            store.remove(ENROLLMENT_KEY)
+            _enrollment.value = null
+            loaded = true
+            _appUnlocked.value = false
+            _keyInvalidatedNotice.value = true
+        }
     }
 
     fun clearKeyInvalidatedNotice() {

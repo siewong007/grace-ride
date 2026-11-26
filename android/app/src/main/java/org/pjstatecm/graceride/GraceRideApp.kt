@@ -48,7 +48,7 @@ class GraceRideApp : Application() {
         // Images (avatars, DuitNow QRs, receipts) are cookie-authenticated:
         // share the session OkHttp client with Coil.
         val imageLoader = ImageLoader.Builder(this)
-            .okHttpClient(container.okHttp)
+            .okHttpClient(container.okHttp.newBuilder().cache(null).build())
             .components { add(ImageDecoderDecoder.Factory()) }
             .memoryCache {
                 MemoryCache.Builder(this)

@@ -60,7 +60,7 @@ data class RideNewUiState(
     val submitting: Boolean = false,
     val loadError: String? = null,
     val error: String? = null,
-    @StringRes val errorRes: Int? = null,
+    @param:StringRes @get:StringRes val errorRes: Int? = null,
     val createdId: Long? = null,
 )
 
@@ -233,8 +233,21 @@ class RideNewViewModel(
                 )
             }
             TripType.OUTBOUND, TripType.ROUND -> {
-                val outMins = (startMins - 40).coerceAtLeast(0)
-                val retMins = (startMins + 120).coerceAtMost(23 * 60 + 59)
+                val comingFromReturn = s.tripType == TripType.RETURN
+                val outDate = if (comingFromReturn) dt.toLocalDate() else s.date
+                val outMins = if (comingFromReturn) (startMins - 40).coerceAtLeast(0) else (s.hour * 60 + s.minute)
+                val defaultRetMins = (startMins + 120).coerceAtMost(23 * 60 + 59)
+                val curRetMins = s.returnHour * 60 + s.returnMinute
+                val validExistingReturn = !comingFromReturn && (
+                    s.returnDate.isAfter(outDate) ||
+                        (s.returnDate == outDate && curRetMins > outMins)
+                    )
+                val retDate = if (validExistingReturn) s.returnDate else outDate
+                val retMins = if (validExistingReturn) {
+                    curRetMins
+                } else {
+                    maxOf(defaultRetMins, (outMins + 30).coerceAtMost(23 * 60 + 59))
+                }
                 val homeAddr = if (s.address == ev.location) {
                     if (s.destination.isNotBlank() && s.destination != ev.location) {
                         s.destination
@@ -246,16 +259,54 @@ class RideNewViewModel(
                 }
                 _state.value = s.copy(
                     tripType = newType,
-                    date = dt.toLocalDate(),
+                    date = outDate,
                     hour = outMins / 60,
                     minute = outMins % 60,
-                    returnDate = if (newType == TripType.ROUND) dt.toLocalDate() else s.returnDate,
+                    returnDate = if (newType == TripType.ROUND) retDate else s.returnDate,
                     returnHour = if (newType == TripType.ROUND) retMins / 60 else s.returnHour,
                     returnMinute = if (newType == TripType.ROUND) retMins % 60 else s.returnMinute,
                     destination = ev.location,
                     address = homeAddr,
+                    suggestions = emptyList(),
                 )
             }
+        }
+    }
+
+    fun setProxyMode(proxy: Boolean) {
+        val s = _state.value
+        if (s.isProxy == proxy) return
+        val cleanedNotes = stripAppliedNotes(s.notes, lastAppliedPlaceNotes)
+        val defaultPlace = s.savedPlaces.firstOrNull { it.isDefault == 1 } ?: s.savedPlaces.firstOrNull()
+        val isReturn = s.tripType == TripType.RETURN
+        if (proxy) {
+            lastAppliedPlaceNotes = null
+            val defaultAddr = defaultPlace?.address
+            _state.value = s.copy(
+                isProxy = true,
+                saveAddress = false,
+                saveAddressLabel = "",
+                notes = cleanedNotes,
+                address = if (!isReturn && s.address == defaultAddr) "" else s.address,
+                destination = if (isReturn && s.destination == defaultAddr) "" else s.destination,
+            )
+        } else {
+            val gate = defaultPlace?.gateNotes?.trim().orEmpty()
+            lastAppliedPlaceNotes = gate.ifEmpty { null }
+            val mergedNotes = when {
+                gate.isEmpty() -> cleanedNotes
+                cleanedNotes.contains(gate) -> cleanedNotes
+                cleanedNotes.isEmpty() -> gate
+                else -> "$cleanedNotes\n$gate"
+            }
+            val shouldFill = defaultPlace != null && (if (isReturn) s.destination.isBlank() else s.address.isBlank())
+            _state.value = s.copy(
+                isProxy = false,
+                areaId = if (shouldFill && defaultPlace?.areaId != null) defaultPlace.areaId else s.areaId,
+                address = if (shouldFill && !isReturn) defaultPlace!!.address else s.address,
+                destination = if (shouldFill && isReturn) defaultPlace!!.address else s.destination,
+                notes = mergedNotes,
+            )
         }
     }
 
@@ -295,6 +346,15 @@ class RideNewViewModel(
 
     fun onAddressChange(value: String) {
         _state.value = _state.value.copy(address = value)
+        if (_state.value.tripType != TripType.RETURN) searchPlaces(value)
+    }
+
+    fun onDestinationChange(value: String) {
+        _state.value = _state.value.copy(destination = value)
+        if (_state.value.tripType == TripType.RETURN) searchPlaces(value)
+    }
+
+    private fun searchPlaces(value: String) {
         searchJob?.cancel()
         if (value.trim().length < 3) {
             _state.value = _state.value.copy(suggestions = emptyList())
@@ -313,18 +373,31 @@ class RideNewViewModel(
     fun pickSuggestion(label: String) {
         val cur = _state.value
         val inferred = cur.areaId ?: inferAreaId(label, cur.areas)
-        _state.value = cur.copy(address = label, areaId = inferred, suggestions = emptyList())
+        _state.value = if (cur.tripType == TripType.RETURN) {
+            cur.copy(destination = label, areaId = inferred, suggestions = emptyList())
+        } else {
+            cur.copy(address = label, areaId = inferred, suggestions = emptyList())
+        }
     }
 
     fun pickSuggestion(place: Place) {
         val cur = _state.value
         val inferred = cur.areaId ?: inferAreaId(place.label, cur.areas)
-        _state.value = cur.copy(
-            address = place.label,
-            pickedPlace = place,
-            areaId = inferred,
-            suggestions = emptyList(),
-        )
+        _state.value = if (cur.tripType == TripType.RETURN) {
+            cur.copy(
+                destination = place.label,
+                pickedPlace = place,
+                areaId = inferred,
+                suggestions = emptyList(),
+            )
+        } else {
+            cur.copy(
+                address = place.label,
+                pickedPlace = place,
+                areaId = inferred,
+                suggestions = emptyList(),
+            )
+        }
     }
 
     private fun stripAppliedNotes(curNotes: String, applied: String?): String {

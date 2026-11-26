@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -18,10 +19,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.MyLocation
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -60,16 +65,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Cache
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.CookieJar
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.ui.theme.GrPrimary
 import org.pjstatecm.graceride.ui.theme.GrSuccess
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -95,7 +106,11 @@ data class LiveMapPoint(
 )
 
 private object OsmTileLoader {
-    private val memory = LruCache<String, ImageBitmap>(96)
+    private const val TILE_CACHE_KB = 16 * 1024
+    private val memory = object : LruCache<String, ImageBitmap>(TILE_CACHE_KB) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int =
+            ((value.width * value.height * 4) / 1024).coerceAtLeast(1)
+    }
 
     @Volatile
     private var client: OkHttpClient? = null
@@ -120,19 +135,31 @@ private object OsmTileLoader {
         val key = "$z/$x/$y"
         memory.get(key)?.let { return it }
         val http = getClient(context) ?: return null
-        return withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("https://tile.openstreetmap.org/$z/$x/$y.png")
+            .header("User-Agent", "GraceRideAndroid/0.1 (+https://graceride.saliminn.my)")
+            .build()
+        val bytes = suspendCancellableCoroutine<ByteArray?> { cont ->
+            val call = http.newCall(req)
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resume(null)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    val data = response.use { r ->
+                        if (r.isSuccessful) runCatching { r.body?.bytes() }.getOrNull() else null
+                    }
+                    if (cont.isActive) cont.resume(data)
+                }
+            })
+        } ?: return null
+        return withContext(Dispatchers.Default) {
             memory.get(key)?.let { return@withContext it }
             runCatching {
-                val req = Request.Builder()
-                    .url("https://tile.openstreetmap.org/$z/$x/$y.png")
-                    .header("User-Agent", "GraceRideAndroid/0.1 (+https://graceride.saliminn.my)")
-                    .build()
-                http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use null
-                    val bytes = resp.body?.bytes() ?: return@use null
-                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                    if (bmp != null) memory.put(key, bmp)
-                    bmp
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()?.also { bmp ->
+                    memory.put(key, bmp)
                 }
             }.getOrNull()
         }
@@ -202,8 +229,11 @@ private fun fitViewport(
 @Composable
 fun GraceRideLiveMap(
     points: List<LiveMapPoint>,
-    route: List<List<Double>> = emptyList(),
     modifier: Modifier = Modifier,
+    route: List<List<Double>> = emptyList(),
+    focusPoint: Pair<Double, Double>? = null,
+    showZoomControls: Boolean = false,
+    onFitAll: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val inspectionMode = LocalInspectionMode.current
@@ -216,17 +246,28 @@ fun GraceRideLiveMap(
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var panOffsetPx by remember { mutableStateOf(Offset.Zero) }
     var tileRevision by remember { mutableIntStateOf(0) }
+    val routePath = remember { Path() }
 
-    val fitKey = remember(points, route) {
-        points.joinToString(";") { "${it.id}:${it.lat},${it.lng}" } + "|" + route.size
+    val fitKey = remember(points, route, focusPoint) {
+        val ids = points.map { it.id }.sorted().joinToString(",")
+        val start = route.firstOrNull()?.take(2)?.joinToString(",") ?: ""
+        val end = route.lastOrNull()?.take(2)?.joinToString(",") ?: ""
+        val focus = focusPoint?.let { "${it.first},${it.second}" } ?: ""
+        "$ids|${route.size}|$start|$end|$focus"
     }
+    var zoomDelta by remember(fitKey) { mutableIntStateOf(0) }
     LaunchedEffect(fitKey) {
         panOffsetPx = Offset.Zero
     }
 
-    val (centerLat, centerLng, zoom) = remember(points, route, viewportSize) {
-        fitViewport(points, route, viewportSize.width, viewportSize.height)
+    val (centerLat, centerLng, baseZoom) = remember(fitKey, viewportSize) {
+        if (focusPoint != null) {
+            Triple(focusPoint.first, focusPoint.second, 15)
+        } else {
+            fitViewport(points, route, viewportSize.width, viewportSize.height)
+        }
     }
+    val zoom = (baseZoom + zoomDelta).coerceIn(10, 18)
 
     val centerWorldX = lngToWorldX(centerLng, zoom) - panOffsetPx.x
     val centerWorldY = latToWorldY(centerLat, zoom) - panOffsetPx.y
@@ -332,19 +373,18 @@ fun GraceRideLiveMap(
             }
 
             if (routeScreenPoints.size >= 2) {
-                val path = Path().apply {
-                    moveTo(routeScreenPoints[0].x, routeScreenPoints[0].y)
-                    for (i in 1 until routeScreenPoints.size) {
-                        lineTo(routeScreenPoints[i].x, routeScreenPoints[i].y)
-                    }
+                routePath.reset()
+                routePath.moveTo(routeScreenPoints[0].x, routeScreenPoints[0].y)
+                for (i in 1 until routeScreenPoints.size) {
+                    routePath.lineTo(routeScreenPoints[i].x, routeScreenPoints[i].y)
                 }
                 drawPath(
-                    path = path,
+                    path = routePath,
                     color = Color.White.copy(alpha = 0.85f),
                     style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
                 )
                 drawPath(
-                    path = path,
+                    path = routePath,
                     color = primaryLine,
                     style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
                 )
@@ -432,7 +472,69 @@ fun GraceRideLiveMap(
             }
         }
 
-        if (panOffsetPx.getDistance() > 24f) {
+        if (showZoomControls) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(
+                            onClick = { if (zoom < 18) zoomDelta++ },
+                            enabled = zoom < 18,
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.Add,
+                                contentDescription = stringResource(R.string.traffic_live_zoom_in),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        HorizontalDivider(Modifier.widthIn(max = 36.dp), color = borderColor)
+                        IconButton(
+                            onClick = { if (zoom > 10) zoomDelta-- },
+                            enabled = zoom > 10,
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.Remove,
+                                contentDescription = stringResource(R.string.traffic_live_zoom_out),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+                if (focusPoint != null || panOffsetPx.getDistance() > 24f || zoomDelta != 0) {
+                    Surface(
+                        onClick = {
+                            panOffsetPx = Offset.Zero
+                            zoomDelta = 0
+                            onFitAll?.invoke()
+                        },
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        shape = CircleShape,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Outlined.MyLocation, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Text(stringResource(R.string.traffic_live_fit_all), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        } else if (panOffsetPx.getDistance() > 24f) {
             Surface(
                 onClick = { panOffsetPx = Offset.Zero },
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),

@@ -7,9 +7,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.ChatMessageDto
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.notifications.RealtimeEvent
 
@@ -44,6 +47,11 @@ class TripChatViewModel(
                 }
             }
         }
+        viewModelScope.launch {
+            container.networkMonitor.isOnline.drop(1).filter { it }.collect {
+                if (sheetVisible) load(silent = _state.value.messages.isNotEmpty())
+            }
+        }
     }
 
     fun setSheetVisible(visible: Boolean) {
@@ -73,7 +81,7 @@ class TripChatViewModel(
                 )
                 val maxId = thread.messages.lastOrNull()?.id ?: 0L
                 if (sheetVisible && maxId > 0L) {
-                    runCatching { container.rides.markChatRead(rideId, maxId) }
+                    runSuspendCatching { container.rides.markChatRead(rideId, maxId) }
                 }
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(loading = false, error = e.message)

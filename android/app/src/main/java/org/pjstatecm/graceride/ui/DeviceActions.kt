@@ -294,6 +294,35 @@ fun openInMaps(context: Context, query: String) {
     }
 }
 
+/** Launch the system share sheet for plain [text] (e.g. invite links). */
+fun shareText(
+    context: Context,
+    text: String,
+    subject: String? = null,
+    chooserTitle: String? = null,
+) {
+    if (text.isBlank()) return
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+        if (!subject.isNullOrBlank()) {
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+        }
+    }
+    val chooser = Intent.createChooser(send, chooserTitle).apply {
+        if (context !is android.app.Activity) {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+    try {
+        context.startActivity(chooser)
+    } catch (_: ActivityNotFoundException) {
+        // No share target available on this device.
+    } catch (_: SecurityException) {
+        // Cross-app launch disallowed by policy.
+    }
+}
+
 /** Copy plain [text] to the system clipboard and return true if the service accepted it. */
 fun copyToClipboard(context: Context, label: String, text: String, sensitive: Boolean = false): Boolean {
     val cm = context.getSystemService(ClipboardManager::class.java) ?: return false

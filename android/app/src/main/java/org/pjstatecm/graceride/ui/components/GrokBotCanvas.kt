@@ -133,27 +133,32 @@ private fun easeInOutSine(x: Float): Float = (-(cos(PI * x.coerceIn(0f, 1f)) - 1
 @Composable
 fun GrokBotCanvas(
     spec: GrokBotSpec,
+    modifier: Modifier = Modifier,
     move: String = "idle",
     variant: String = "tile",
     gazeOffset: Offset = Offset.Zero,
     staticMovePreview: Boolean = false,
-    modifier: Modifier = Modifier,
 ) {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val animOn = animatorsEnabled()
     var prevShape by remember { mutableStateOf(spec.shape) }
     var targetShape by remember { mutableStateOf(spec.shape) }
     val shapeMorphAnim = remember { Animatable(1f) }
-    LaunchedEffect(spec.shape) {
+    LaunchedEffect(spec.shape, animOn) {
         if (spec.shape != targetShape) {
             prevShape = targetShape
             targetShape = spec.shape
-            shapeMorphAnim.snapTo(0f)
-            shapeMorphAnim.animateTo(1f, tween(durationMillis = 240))
+            if (animOn) {
+                shapeMorphAnim.snapTo(0f)
+                shapeMorphAnim.animateTo(1f, tween(durationMillis = 240))
+            } else {
+                shapeMorphAnim.snapTo(1f)
+            }
         }
     }
     val shapeMorphState = shapeMorphAnim.asState()
 
-    val isAnimated = !(variant == "tile" && (move == "idle" || staticMovePreview))
+    val isAnimated = animOn && !(variant == "tile" && (move == "idle" || staticMovePreview))
     val cycleSecState: State<Float>? = if (isAnimated) {
         val inf = rememberInfiniteTransition(label = "grokMove")
         inf.animateFloat(
@@ -195,6 +200,7 @@ fun GrokBotCanvas(
 
     Canvas(modifier = modifier) {
         if (size.minDimension <= 0f) return@Canvas
+        val useStaticPose = staticMovePreview || !isAnimated
         val cycleSec = cycleSecState?.value ?: 1.1f
         val shapeMorphT = shapeMorphState.value
         val span = if (variant == "stage") 316f else 250f
@@ -251,7 +257,7 @@ fun GrokBotCanvas(
                 rightTr = trs.second
             }
             "wink" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 2.4f) / 2.4f
                 val w = if (ph in 0.18f..0.72f) sin(((ph - 0.18f) / 0.54f) * PI.toFloat()) else 0f
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, shapeBlendCoords, 0f, workCoords, 1f + w * 0.02f, -3.5f * w)
                 leftPill = GrokBotGeometry.WINK_LEFT_EYE
@@ -260,7 +266,7 @@ fun GrokBotCanvas(
                 rightTr = GrokBotGeometry.buildEyeTransform(28.3f + gx * 10f, -14.8f + gy * 8f, -6.1f, (1f - w * 0.85f).coerceAtLeast(0.18f))
             }
             "wide_eyes" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 2.4f) / 2.4f
                 val pop = sin(ph * PI.toFloat())
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, shapeBlendCoords, 0f, workCoords, 1f + pop * 0.04f, 0f, 0f, -2f * pop)
                 leftPill = GrokBotGeometry.WIDE_EYE
@@ -270,9 +276,9 @@ fun GrokBotCanvas(
                 rightTr = GrokBotGeometry.buildEyeTransform(31.7f + gx * 12f, -6f + gy * 9f, 0f, sy)
             }
             "alert" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.2f) / 2.2f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 2.2f) / 2.2f
                 val m = if (ph < 0.25f) easeInOutSine(ph / 0.25f) else if (ph < 0.78f) 1f else easeInOutSine((1f - ph) / 0.22f)
-                val shake = if (m > 0.7f && !staticMovePreview) sin(ph * PI.toFloat() * 16f) * 3.5f else 0f
+                val shake = if (m > 0.7f && !useStaticPose) sin(ph * PI.toFloat() * 16f) * 3.5f else 0f
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.ALERT_STEM_COORDS, m, workCoords, 1f, shake)
                 showEyes = m < 0.38f
                 if (showEyes) {
@@ -288,7 +294,7 @@ fun GrokBotCanvas(
                 }
             }
             "notification" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.8f) / 2.8f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 2.8f) / 2.8f
                 val pop = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.85f) 1f else easeInOutSine((1f - ph) / 0.15f)
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.SHAPE_COORDS.getValue("circle"), pop * 0.5f, workCoords)
                 leftPill = GrokBotGeometry.NOTIF_EYE
@@ -308,9 +314,9 @@ fun GrokBotCanvas(
                 }
             }
             "exclamation" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 2.4f) / 2.4f
                 val m = if (ph < 0.25f) easeInOutSine(ph / 0.25f) else if (ph < 0.78f) 1f else easeInOutSine((1f - ph) / 0.22f)
-                val bounceY = if (m > 0.6f && !staticMovePreview) -abs(sin(ph * PI.toFloat() * 4f)) * 5f else 0f
+                val bounceY = if (m > 0.6f && !useStaticPose) -abs(sin(ph * PI.toFloat() * 4f)) * 5f else 0f
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.EXCLAMATION_STEM_COORDS, m, workCoords, 1f, 0f, 0f, bounceY)
                 showEyes = m < 0.38f
                 if (showEyes) {
@@ -326,7 +332,7 @@ fun GrokBotCanvas(
                 }
             }
             "sleep" -> {
-                val ph = if (staticMovePreview) 0.55f else (cycleSec % 3.6f) / 3.6f
+                val ph = if (useStaticPose) 0.55f else (cycleSec % 3.6f) / 3.6f
                 val m = if (ph < 0.22f) easeInOutSine(ph / 0.22f) else if (ph < 0.82f) 1f else easeInOutSine((1f - ph) / 0.18f)
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.SLEEP_CORE_COORDS, m, workCoords)
                 showEyes = m < 0.35f
@@ -337,7 +343,7 @@ fun GrokBotCanvas(
                 }
             }
             "egg" -> {
-                val ph = if (staticMovePreview) 0.45f else (cycleSec % 2.6f) / 2.6f
+                val ph = if (useStaticPose) 0.45f else (cycleSec % 2.6f) / 2.6f
                 val wobble = sin(ph * PI.toFloat() * 4f) * 7.5f * sin(ph * PI.toFloat())
                 val m = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.85f) 1f else easeInOutSine((1f - ph) / 0.15f)
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.EGG_COORDS, m, workCoords, 1f, wobble)
@@ -347,7 +353,7 @@ fun GrokBotCanvas(
                 rightTr = GrokBotGeometry.buildEyeTransform(21.15f + wobble * 0.4f + gx * 8f, -16.8f + gy * 6f, wobble)
             }
             "hexagon" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 3.0f) / 3.0f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 3.0f) / 3.0f
                 val m = if (ph < 0.22f) easeInOutSine(ph / 0.22f) else if (ph < 0.82f) 1f else easeInOutSine((1f - ph) / 0.18f)
                 val rot = easeInOutSine(ph) * 60f
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.SHAPE_COORDS.getValue("hexagon"), m, workCoords, 1f, rot)
@@ -357,7 +363,7 @@ fun GrokBotCanvas(
                 rightTr = GrokBotGeometry.buildEyeTransform(25.2f + gx * 10f, -14.2f + gy * 8f, 4f)
             }
             "play" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.6f) / 2.6f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 2.6f) / 2.6f
                 val m = if (ph < 0.22f) easeInOutSine(ph / 0.22f) else if (ph < 0.82f) 1f else easeInOutSine((1f - ph) / 0.18f)
                 val pulse = 1f + sin(ph * PI.toFloat() * 2f) * 0.03f * m
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.PLAY_COORDS, m, workCoords, pulse)
@@ -367,14 +373,14 @@ fun GrokBotCanvas(
                 rightTr = GrokBotGeometry.buildEyeTransform(18.7f + gx * 8f, -9f + gy * 6f, 0f)
             }
             "orbit" -> {
-                val ph = if (staticMovePreview) 0.35f else (cycleSec % 3.2f) / 3.2f
+                val ph = if (useStaticPose) 0.35f else (cycleSec % 3.2f) / 3.2f
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, shapeBlendCoords, 0f, workCoords, 0.62f, sin(ph * PI.toFloat() * 2f) * 4f)
                 val trs = GrokBotGeometry.computeFaceEyeTransforms(spec.face, cos(ph * PI.toFloat() * 2f) * 0.55f, sin(ph * PI.toFloat() * 2f) * 0.3f, 1f, spec.shape)
                 leftTr = trs.first.copy(a = trs.first.a * 0.62f, b = trs.first.b * 0.62f, c = trs.first.c * 0.62f, d = trs.first.d * 0.62f, tx = trs.first.tx * 0.62f, ty = trs.first.ty * 0.62f)
                 rightTr = trs.second.copy(a = trs.second.a * 0.62f, b = trs.second.b * 0.62f, c = trs.second.c * 0.62f, d = trs.second.d * 0.62f, tx = trs.second.tx * 0.62f, ty = trs.second.ty * 0.62f)
             }
             "swirl" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 3.0f) / 3.0f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 3.0f) / 3.0f
                 val m = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.84f) 1f else easeInOutSine((1f - ph) / 0.16f)
                 bodyAlpha = (1f - m * 1.25f).coerceIn(0f, 1f)
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.BURST_CORE_COORDS, m, workCoords, 1f, ph * 180f)
@@ -386,7 +392,7 @@ fun GrokBotCanvas(
                 }
             }
             "burst" -> {
-                val ph = if (staticMovePreview) 0.45f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.45f else (cycleSec % 2.4f) / 2.4f
                 val m = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.82f) 1f else easeInOutSine((1f - ph) / 0.18f)
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.BURST_CORE_COORDS, m, workCoords)
                 showEyes = m < 0.35f
@@ -397,7 +403,7 @@ fun GrokBotCanvas(
                 }
             }
             "comet" -> {
-                val ph = if (staticMovePreview) 0.32f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.32f else (cycleSec % 2.4f) / 2.4f
                 val m = if (ph < 0.18f) easeInOutSine(ph / 0.18f) else if (ph < 0.85f) 1f else easeInOutSine((1f - ph) / 0.15f)
                 val ang = ph * PI.toFloat() * 2f - PI.toFloat() / 2f
                 val headR = 72f * m
@@ -419,7 +425,7 @@ fun GrokBotCanvas(
 
         // Back layer (orbit back half)
         if (move == "orbit") {
-            val ph = if (staticMovePreview) 0.35f else (cycleSec % 3.2f) / 3.2f
+            val ph = if (useStaticPose) 0.35f else (cycleSec % 3.2f) / 3.2f
             val ang = ph * PI.toFloat() * 2f
             val satX = cos(ang) * 102f
             val satY = sin(ang) * 34f
@@ -510,12 +516,12 @@ fun GrokBotCanvas(
                 drawCircle(eyeBackingColor, 2.4f * scale, Offset(cx + 113f * scale, cy - 102f * scale))
             }
             "sleep" -> {
-                val ph = if (staticMovePreview) 0.55f else (cycleSec % 3.6f) / 3.6f
+                val ph = if (useStaticPose) 0.55f else (cycleSec % 3.6f) / 3.6f
                 for (idx in 0 until 3) {
                     val zx = SLEEP_Z_X[idx]
                     val zy = SLEEP_Z_Y[idx]
                     val zw = SLEEP_Z_W[idx]
-                    val drift = if (staticMovePreview) 0f else ((ph + idx * 0.25f) % 1f) * -12f
+                    val drift = if (useStaticPose) 0f else ((ph + idx * 0.25f) % 1f) * -12f
                     val x0 = cx + (zx - zw * 0.4f) * scale
                     val x1 = cx + (zx + zw * 0.4f) * scale
                     val y0 = cy + (zy + drift - zw * 0.35f) * scale
@@ -527,7 +533,7 @@ fun GrokBotCanvas(
                 }
             }
             "orbit" -> {
-                val ph = if (staticMovePreview) 0.35f else (cycleSec % 3.2f) / 3.2f
+                val ph = if (useStaticPose) 0.35f else (cycleSec % 3.2f) / 3.2f
                 val ang = ph * PI.toFloat() * 2f
                 val satX = cos(ang) * 102f
                 val satY = sin(ang) * 34f
@@ -538,7 +544,7 @@ fun GrokBotCanvas(
                 }
             }
             "swirl" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 3.0f) / 3.0f
+                val ph = if (useStaticPose) 0.5f else (cycleSec % 3.0f) / 3.0f
                 val spin = ph * 360f
                 val swirlStroke = moveStrokeCache.swirlFor(scale)
                 for (idx in SWIRL_RADII.indices) {
@@ -556,7 +562,7 @@ fun GrokBotCanvas(
                 }
             }
             "burst" -> {
-                val ph = if (staticMovePreview) 0.45f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.45f else (cycleSec % 2.4f) / 2.4f
                 val burst = sin(ph * PI.toFloat())
                 val r0 = (32f + 12f * burst) * scale
                 val r1 = (58f + 34f * burst) * scale
@@ -574,7 +580,7 @@ fun GrokBotCanvas(
                 }
             }
             "comet" -> {
-                val ph = if (staticMovePreview) 0.32f else (cycleSec % 2.4f) / 2.4f
+                val ph = if (useStaticPose) 0.32f else (cycleSec % 2.4f) / 2.4f
                 val headDeg = ph * 360f - 90f
                 val r = 72f * scale
                 drawArc(

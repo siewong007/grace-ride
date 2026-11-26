@@ -7,6 +7,7 @@ import android.security.keystore.KeyProperties
 import androidx.core.content.edit
 import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.ProviderException
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
@@ -147,9 +148,12 @@ class EncryptedPrefsStore(context: Context) : SecureStore {
                 if (v is String) {
                     try {
                         cache.putIfAbsent(k, AesGcmCodec.decrypt(key, k, v))
-                    } catch (_: GeneralSecurityException) {
-                        hadFailure = true
-                        break
+                    } catch (e: Exception) {
+                        if (e is GeneralSecurityException || e is ProviderException) {
+                            hadFailure = true
+                            break
+                        }
+                        throw e
                     }
                 }
             }
@@ -176,11 +180,15 @@ class EncryptedPrefsStore(context: Context) : SecureStore {
             }
             val value = try {
                 AesGcmCodec.decrypt(getOrCreateKey(), key, encoded)
-            } catch (_: GeneralSecurityException) {
-                // Corrupted Keystore entry or restored ciphertexts: wipe local encrypted
-                // store so the member gets a clean signed-out state instead of a crash loop.
-                resetCorruptedStore()
-                null
+            } catch (e: Exception) {
+                if (e is GeneralSecurityException || e is ProviderException) {
+                    // Corrupted Keystore entry or restored ciphertexts: wipe local encrypted
+                    // store so the member gets a clean signed-out state instead of a crash loop.
+                    resetCorruptedStore()
+                    null
+                } else {
+                    throw e
+                }
             }
             cache[key] = value ?: NULL_SENTINEL
             value
@@ -191,9 +199,13 @@ class EncryptedPrefsStore(context: Context) : SecureStore {
         synchronized(lock) {
             val encoded = try {
                 AesGcmCodec.encrypt(getOrCreateKey(), key, value)
-            } catch (_: GeneralSecurityException) {
-                resetCorruptedStore()
-                AesGcmCodec.encrypt(getOrCreateKey(), key, value)
+            } catch (e: Exception) {
+                if (e is GeneralSecurityException || e is ProviderException) {
+                    resetCorruptedStore()
+                    AesGcmCodec.encrypt(getOrCreateKey(), key, value)
+                } else {
+                    throw e
+                }
             }
             cache[key] = value
             getPrefs().edit { putString(key, encoded) }
@@ -238,23 +250,22 @@ class EncryptedPrefsStore(context: Context) : SecureStore {
                 .setKeySize(256)
                 .setRandomizedEncryptionRequired(true)
                 .apply {
-                    if (strongBox && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    if (strongBox) {
                         setIsStrongBoxBacked(true)
                     }
                 }
                 .build()
 
-            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                try {
-                    kg.init(buildSpec(strongBox = true))
-                    kg.generateKey()
-                } catch (_: android.security.keystore.StrongBoxUnavailableException) {
+            return try {
+                kg.init(buildSpec(strongBox = true))
+                kg.generateKey()
+            } catch (e: Exception) {
+                if (e is GeneralSecurityException || e is ProviderException) {
                     kg.init(buildSpec(strongBox = false))
                     kg.generateKey()
+                } else {
+                    throw e
                 }
-            } else {
-                kg.init(buildSpec(strongBox = false))
-                kg.generateKey()
             }
         }
 

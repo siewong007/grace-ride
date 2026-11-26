@@ -9,13 +9,6 @@ import android.graphics.Path as AndroidPath
 import android.graphics.RadialGradient as AndroidRadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -159,7 +152,7 @@ fun GrokBotControlsPanel(
     tilePreviewSize: Dp = 44.dp,
     cols: Int = 4,
 ) {
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val shapeRows = remember(cols) { GrokBotSpec.SHAPES.chunked(cols) }
     val faceRows = remember(cols) { GrokBotSpec.FACES.chunked(cols) }
     val colorRows = remember { GrokBotSpec.COLORS.chunked(6) }

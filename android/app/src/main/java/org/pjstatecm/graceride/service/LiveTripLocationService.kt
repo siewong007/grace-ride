@@ -2,7 +2,7 @@ package org.pjstatecm.graceride.service
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.NotificationChannel
+import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -19,6 +19,9 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,10 +42,14 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.TripRouteDto
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.notifications.NotificationHelper
 import org.pjstatecm.graceride.notifications.RealtimeEvent
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.pow
@@ -67,8 +74,11 @@ class LiveTripLocationService : Service() {
     private var consecutiveNetworkErrors: Int = 0
     @Volatile
     private var latestRoute: TripRouteDto? = null
-    private val autoArrivalHitCounts = HashMap<Long, Int>()
-    private val autoArrivedRideIds = HashSet<Long>()
+    @Volatile
+    private var lastNotifBody: String? = null
+    private val autoArrivalHitCounts = ConcurrentHashMap<Long, Int>()
+    private val autoArrivedRideIds = ConcurrentHashMap.newKeySet<Long>()
+    private val sessionGen = AtomicLong(0L)
 
     private var verifyAndWatchJob: Job? = null
     private var authObserverJob: Job? = null
@@ -94,6 +104,7 @@ class LiveTripLocationService : Service() {
 
         override fun onProviderEnabled(provider: String) {}
 
+        @Suppress("OVERRIDE_DEPRECATION")
         @Deprecated("Deprecated in Java")
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
     }
@@ -103,54 +114,83 @@ class LiveTripLocationService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                if (fgsState.get() == ServiceFgsState.STARTING_FG) {
+                    startForegroundWithNotif()
+                }
                 stopSharingAndSelf(notifyServer = true)
                 return START_NOT_STICKY
             }
             ACTION_START -> {
                 val rideId = intent.getLongExtra(EXTRA_RIDE_ID, -1L)
                 val tripId = intent.getLongExtra(EXTRA_TRIP_ID, -1L)
+                activeRideId = rideId
+                activeTripId = tripId
+                val myGen = sessionGen.incrementAndGet()
+                verifyAndWatchJob?.cancel()
+                authObserverJob?.cancel()
+                sseObserverJob?.cancel()
+                pushJob?.cancel()
+
                 if (!hasLocationPermission(this) || !hasActiveJourneyTarget(rideId, tripId)) {
+                    if (fgsState.get() == ServiceFgsState.STARTING_FG) {
+                        startForegroundWithNotif()
+                    }
+                    stopping.set(true)
                     _isSharing.value = false
+                    fgsState.set(ServiceFgsState.IDLE)
+                    pendingStop.set(false)
+                    runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                activeRideId = rideId
-                activeTripId = tripId
                 stopping.set(false)
                 if (!startForegroundWithNotif()) {
                     stopSharingAndSelf(notifyServer = false)
                     return START_NOT_STICKY
                 }
-                verifyAndWatchJob?.cancel()
-                authObserverJob?.cancel()
-                sseObserverJob?.cancel()
-                pushJob?.cancel()
-                verifyJourneyThenStream()
+                fgsState.set(ServiceFgsState.RUNNING)
+                if (pendingStop.getAndSet(false)) {
+                    stopSharingAndSelf(notifyServer = false)
+                    return START_NOT_STICKY
+                }
+                verifyJourneyThenStream(myGen)
                 return START_NOT_STICKY
             }
             else -> {
+                if (fgsState.get() == ServiceFgsState.STARTING_FG) {
+                    startForegroundWithNotif()
+                }
+                fgsState.set(ServiceFgsState.IDLE)
+                pendingStop.set(false)
+                runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
                 stopSelf()
                 return START_NOT_STICKY
             }
         }
     }
 
-    private fun startForegroundWithNotif(): Boolean {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm?.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.live_location_notif_channel_name),
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = getString(R.string.live_location_notif_channel_desc)
-            },
-        )
+    private fun buildForegroundNotification(route: TripRouteDto? = null): Pair<Notification, String> {
+        val app = applicationContext as? GraceRideApp
+        val lang = app?.container?.lang
+        val hideLockDetails = app?.container?.secureStore?.getString("notif_hide_lock_details") == "1"
+        val ctx = NotificationHelper.localizedContext(this, lang)
+        NotificationHelper.ensureChannels(this, lang)
+        val body = when {
+            !hideLockDetails && route != null && route.live && route.stops.isNotEmpty() ->
+                ctx.getString(R.string.live_location_notif_progress, route.stops.size, route.onboard)
+            !hideLockDetails && route != null && route.live && route.onboard > 0 ->
+                ctx.getString(R.string.live_location_notif_en_route_dest, route.onboard)
+            else -> ctx.getString(R.string.live_location_notif_body)
+        }
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(
                 NotificationHelper.EXTRA_NOTIF_LINK,
                 if (activeRideId > 0L) "/rides/$activeRideId" else "/drive",
+            )
+            putExtra(
+                NotificationHelper.EXTRA_NOTIF_TOKEN,
+                NotificationHelper.internalToken(this@LiveTripLocationService),
             )
         }
         val tapPending = PendingIntent.getActivity(
@@ -167,13 +207,33 @@ class LiveTripLocationService : Service() {
         )
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle(getString(R.string.live_location_notif_title))
-            .setContentText(getString(R.string.live_location_notif_body))
+            .setContentTitle(ctx.getString(R.string.live_location_notif_title))
+            .setContentText(body)
             .setContentIntent(tapPending)
             .setOngoing(true)
-            .addAction(0, getString(R.string.live_location_stop), stopPending)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(0, ctx.getString(R.string.live_location_stop), stopPending)
             .build()
+        return notif to body
+    }
 
+    private fun updateForegroundNotification(route: TripRouteDto?) {
+        if (stopping.get() || fgsState.get() != ServiceFgsState.RUNNING) return
+        if (!NotificationHelper.hasPostPermission(this)) return
+        val (notif, body) = buildForegroundNotification(route)
+        if (body == lastNotifBody) return
+        lastNotifBody = body
+        runCatching {
+            getSystemService(NotificationManager::class.java)?.notify(NOTIF_ID, notif)
+        }
+    }
+
+    private fun startForegroundWithNotif(): Boolean {
+        val (notif, body) = buildForegroundNotification(latestRoute)
+        lastNotifBody = body
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
@@ -186,15 +246,16 @@ class LiveTripLocationService : Service() {
         }
     }
 
-    private fun verifyJourneyThenStream() {
+    private fun verifyJourneyThenStream(myGen: Long) {
         val app = applicationContext as? GraceRideApp ?: run {
             stopSharingAndSelf(notifyServer = false)
             return
         }
         verifyAndWatchJob = scope.launch {
-            val route = runCatching { app.container.rides.driverRoute().route }.getOrNull()
+            val route = runSuspendCatching { app.container.rides.driverRoute().route }.getOrNull()
+            if (sessionGen.get() != myGen || stopping.get()) return@launch
             latestRoute = route
-            if (!canShareDriverLocation(app.container.auth.state.value, route) || stopping.get()) {
+            if (!canShareDriverLocation(app.container.auth.state.value, route)) {
                 stopSharingAndSelf(notifyServer = false)
                 return@launch
             }
@@ -202,14 +263,15 @@ class LiveTripLocationService : Service() {
             consecutiveNetworkErrors = 0
 
             val started = withContext(Dispatchers.Main) {
-                if (stopping.get()) false else startLocationUpdates()
+                if (sessionGen.get() != myGen || stopping.get()) false else startLocationUpdates()
             }
-            if (!started) return@launch
+            if (!started || sessionGen.get() != myGen) return@launch
             _isSharing.value = true
+            updateForegroundNotification(route)
 
             authObserverJob = scope.launch {
                 app.container.auth.state.collect { st ->
-                    if (st !is AuthState.SignedIn || !st.me.termsAccepted) {
+                    if (sessionGen.get() == myGen && (st !is AuthState.SignedIn || !st.me.termsAccepted)) {
                         stopSharingAndSelf(notifyServer = false)
                     }
                 }
@@ -217,40 +279,44 @@ class LiveTripLocationService : Service() {
 
             sseObserverJob = scope.launch {
                 app.container.realtimeStream.events.collect { ev ->
-                    if (ev != RealtimeEvent.Resume) {
-                        reverifyActiveJourney(app)
+                    if (sessionGen.get() == myGen && ev != RealtimeEvent.Resume) {
+                        reverifyActiveJourney(app, myGen)
                     }
                 }
             }
 
-            while (isActive && !stopping.get()) {
+            while (isActive && sessionGen.get() == myGen && !stopping.get()) {
                 delay(WATCHDOG_INTERVAL_MS)
-                if (stopping.get()) break
+                if (sessionGen.get() != myGen || stopping.get()) break
                 if (!hasLocationPermission(this@LiveTripLocationService)) {
                     stopSharingAndSelf(notifyServer = true)
                     break
                 }
                 if (System.currentTimeMillis() - lastConfirmedLiveMs >= WATCHDOG_INTERVAL_MS) {
-                    reverifyActiveJourney(app)
+                    reverifyActiveJourney(app, myGen)
                 }
             }
         }
     }
 
-    private suspend fun reverifyActiveJourney(app: GraceRideApp) {
-        if (stopping.get()) return
+    private suspend fun reverifyActiveJourney(app: GraceRideApp, myGen: Long) {
+        if (stopping.get() || sessionGen.get() != myGen) return
         var routeLive: Boolean? = null
         var authRejected = false
         try {
             val route = app.container.rides.driverRoute().route
+            if (sessionGen.get() != myGen) return
             latestRoute = route
             routeLive = route?.live == true
             if (routeLive) {
                 lastConfirmedLiveMs = System.currentTimeMillis()
                 consecutiveNetworkErrors = 0
+                updateForegroundNotification(route)
             } else {
                 _nearDestinationTripId.value = null
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: ApiException) {
             if (e.status in setOf(401, 403, 423)) {
                 authRejected = true
@@ -261,6 +327,7 @@ class LiveTripLocationService : Service() {
             consecutiveNetworkErrors++
         }
 
+        if (sessionGen.get() != myGen) return
         when (
             evaluateJourneyCheck(
                 authState = app.container.auth.state.value,
@@ -313,19 +380,25 @@ class LiveTripLocationService : Service() {
     private fun pushLocation(loc: Location) {
         if (stopping.get()) return
         val app = applicationContext as? GraceRideApp ?: return
+        val myGen = sessionGen.get()
+        pushJob?.cancel()
         pushJob = scope.launch {
             pushMutex.withLock {
-                if (stopping.get()) return@withLock
+                if (stopping.get() || sessionGen.get() != myGen) return@withLock
                 try {
                     val heading = if (loc.hasBearing()) loc.bearing.toDouble() else null
                     val res = app.container.rides.postDriverLocation(loc.latitude, loc.longitude, heading)
+                    if (sessionGen.get() != myGen) return@withLock
                     if (!res.sharing) {
                         stopSharingAndSelf(notifyServer = false)
                     } else {
                         lastConfirmedLiveMs = System.currentTimeMillis()
                         consecutiveNetworkErrors = 0
-                        val route = latestRoute ?: runCatching { app.container.rides.driverRoute().route }.getOrNull()
-                            ?.also { latestRoute = it }
+                        val route = latestRoute ?: runSuspendCatching { app.container.rides.driverRoute().route }.getOrNull()
+                            ?.also {
+                                latestRoute = it
+                                updateForegroundNotification(it)
+                            }
                         _nearDestinationTripId.value = if (
                             isNearDestination(
                                 lat = loc.latitude,
@@ -351,21 +424,24 @@ class LiveTripLocationService : Service() {
                         )
                         for (stopRideId in dueIds) {
                             autoArrivedRideIds.add(stopRideId)
-                            val detail = runCatching { app.container.rides.detail(stopRideId) }.getOrNull()
+                            val detail = runSuspendCatching { app.container.rides.detail(stopRideId) }.getOrNull()
                             if (detail != null &&
                                 detail.status == "in_progress" &&
                                 detail.pickedUpAt == null &&
                                 detail.arrivedAtGateAt.isNullOrBlank()
                             ) {
-                                runCatching { app.container.rides.arrivedGate(stopRideId) }
+                                runSuspendCatching { app.container.rides.arrivedGate(stopRideId) }
                             }
                         }
                         if (dueIds.isNotEmpty()) {
-                            latestRoute = runCatching { app.container.rides.driverRoute().route }.getOrNull() ?: latestRoute
+                            latestRoute = runSuspendCatching { app.container.rides.driverRoute().route }.getOrNull() ?: latestRoute
+                            updateForegroundNotification(latestRoute)
                         }
                     }
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (e: ApiException) {
-                    if (e.status in setOf(401, 403, 423)) {
+                    if (sessionGen.get() == myGen && e.status in setOf(401, 403, 423)) {
                         stopSharingAndSelf(notifyServer = false)
                     }
                 } catch (_: Exception) {
@@ -377,6 +453,7 @@ class LiveTripLocationService : Service() {
 
     private fun stopSharingAndSelf(notifyServer: Boolean = true) {
         val first = stopping.compareAndSet(false, true)
+        sessionGen.incrementAndGet()
         verifyAndWatchJob?.cancel()
         authObserverJob?.cancel()
         sseObserverJob?.cancel()
@@ -386,37 +463,45 @@ class LiveTripLocationService : Service() {
         if (first && notifyServer && app != null) {
             app.container.appScope.launch {
                 pushMutex.withLock {
-                    runCatching { app.container.rides.stopDriverLocation() }
+                    runSuspendCatching { app.container.rides.stopDriverLocation() }
                 }
             }
         }
         latestRoute = null
+        lastNotifBody = null
         autoArrivalHitCounts.clear()
         autoArrivedRideIds.clear()
         _nearDestinationTripId.value = null
         _isSharing.value = false
+        fgsState.set(ServiceFgsState.IDLE)
+        pendingStop.set(false)
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
     }
 
     override fun onDestroy() {
         stopping.set(true)
+        sessionGen.incrementAndGet()
         verifyAndWatchJob?.cancel()
         authObserverJob?.cancel()
         sseObserverJob?.cancel()
         pushJob?.cancel()
         locationManager?.let { lm -> runCatching { lm.removeUpdates(listener) } }
         latestRoute = null
+        lastNotifBody = null
+        lastNotifBody = null
         autoArrivalHitCounts.clear()
         autoArrivedRideIds.clear()
         _nearDestinationTripId.value = null
         _isSharing.value = false
+        fgsState.set(ServiceFgsState.IDLE)
+        pendingStop.set(false)
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
-        private const val CHANNEL_ID = "live_trip_location"
+        private const val CHANNEL_ID = NotificationHelper.CHANNEL_LIVE_LOCATION
         private const val NOTIF_ID = 4910
         private const val MIN_PUSH_INTERVAL_MS = 6_000L
         private const val WATCHDOG_INTERVAL_MS = 25_000L
@@ -436,6 +521,10 @@ class LiveTripLocationService : Service() {
 
         private val _nearDestinationTripId = MutableStateFlow<Long?>(null)
         val nearDestinationTripId: StateFlow<Long?> = _nearDestinationTripId.asStateFlow()
+
+        private enum class ServiceFgsState { IDLE, STARTING_FG, RUNNING }
+        private val fgsState = AtomicReference(ServiceFgsState.IDLE)
+        private val pendingStop = AtomicBoolean(false)
 
         internal enum class WatchdogAction {
             KEEP_RUNNING,
@@ -545,15 +634,23 @@ class LiveTripLocationService : Service() {
             if (!hasLocationPermission(context) || !hasActiveJourneyTarget(rideId, tripId)) {
                 return false
             }
+            val eligibleFg = fgsState.get() == ServiceFgsState.RUNNING ||
+                ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (!eligibleFg) {
+                return false
+            }
             val intent = Intent(context, LiveTripLocationService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_RIDE_ID, rideId)
                 putExtra(EXTRA_TRIP_ID, tripId)
             }
+            pendingStop.set(false)
+            fgsState.compareAndSet(ServiceFgsState.IDLE, ServiceFgsState.STARTING_FG)
             return try {
                 ContextCompat.startForegroundService(context, intent)
                 true
             } catch (_: Exception) {
+                fgsState.compareAndSet(ServiceFgsState.STARTING_FG, ServiceFgsState.IDLE)
                 false
             }
         }
@@ -562,9 +659,15 @@ class LiveTripLocationService : Service() {
             _isSharing.value = false
             val app = context.applicationContext as? GraceRideApp
             if (notifyServer && app != null) {
-                app.container.appScope.launch { runCatching { app.container.rides.stopDriverLocation() } }
+                app.container.appScope.launch { runSuspendCatching { app.container.rides.stopDriverLocation() } }
             }
-            runCatching { context.stopService(Intent(context, LiveTripLocationService::class.java)) }
+            when (fgsState.get()) {
+                ServiceFgsState.IDLE -> Unit
+                ServiceFgsState.STARTING_FG -> pendingStop.set(true)
+                ServiceFgsState.RUNNING -> {
+                    runCatching { context.stopService(Intent(context, LiveTripLocationService::class.java)) }
+                }
+            }
         }
     }
 }

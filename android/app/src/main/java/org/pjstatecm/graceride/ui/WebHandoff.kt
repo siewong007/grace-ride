@@ -51,6 +51,8 @@ fun openInWebApp(context: Context, url: String) {
                 return
             } catch (_: ActivityNotFoundException) {
                 // Fall back to external browser handler below.
+            } catch (_: SecurityException) {
+                // Fall back to external browser handler below.
             }
         }
     }
@@ -63,29 +65,43 @@ fun openInWebApp(context: Context, url: String) {
             resolveExternalBrowserPackage(context, uri)?.let { setPackage(it) }
         }
     }
+    if (isWebUrl && intent.`package` == null) {
+        val resolvedPkg = runCatching {
+            context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        }.getOrNull()
+        if (resolvedPkg == context.packageName) {
+            // Never launch an un-packaged App Link that resolves back to MainActivity in a loop.
+            return
+        }
+    }
     try {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         // No browser or handler available on this device.
+    } catch (_: SecurityException) {
+        // Cross-app launch disallowed by policy.
     }
 }
 
 private fun resolveExternalBrowserPackage(context: Context, uri: android.net.Uri): String? {
-    val probe = Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
-    val candidates = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        context.packageManager.queryIntentActivities(
-            probe,
-            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()),
-        )
-    } else {
-        @Suppress("DEPRECATION")
-        context.packageManager.queryIntentActivities(probe, PackageManager.MATCH_ALL)
-    }
-    return candidates
-        .firstOrNull { info ->
-            val pkg = info.activityInfo?.packageName
-            !pkg.isNullOrBlank() && pkg != context.packageName
+    fun findIn(probeUri: android.net.Uri): String? {
+        val probe = Intent(Intent.ACTION_VIEW, probeUri).addCategory(Intent.CATEGORY_BROWSABLE)
+        val candidates = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.queryIntentActivities(
+                probe,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.queryIntentActivities(probe, PackageManager.MATCH_ALL)
         }
-        ?.activityInfo
-        ?.packageName
+        return candidates
+            .firstOrNull { info ->
+                val pkg = info.activityInfo?.packageName
+                !pkg.isNullOrBlank() && pkg != context.packageName
+            }
+            ?.activityInfo
+            ?.packageName
+    }
+    return findIn(uri) ?: findIn("https://example.com".toUri())
 }

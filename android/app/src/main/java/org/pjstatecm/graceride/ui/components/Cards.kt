@@ -405,6 +405,8 @@ fun EventCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     ridesNeeded: Int = 0,
+    quickRsvpLabel: String? = null,
+    onQuickRsvp: (() -> Unit)? = null,
 ) {
     val c = LocalStatusColors.current
     OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
@@ -484,13 +486,10 @@ fun EventCard(
                     verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
                 ) {
                     signupBadge?.let {
-                        val (fg, bg) = if (it.status == "going") c.success to c.successSoft else c.warning to c.warningSoft
                         StatusPill(
                             text = stringResource(if (it.status == "going") R.string.event_going else R.string.event_waitlist),
                             kind = if (it.status == "going") RideStatusKind.ACTIVE else RideStatusKind.PENDING,
                         )
-                        @Suppress("UNUSED_VARIABLE")
-                        val unused = fg to bg
                     }
                     if (event.status == "draft") {
                         Surface(color = c.warningSoft, contentColor = c.warning, shape = CircleShape) {
@@ -526,6 +525,17 @@ fun EventCard(
                                 style = MaterialTheme.typography.labelMedium.tabular(),
                                 modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
                             )
+                        }
+                    }
+                    if (quickRsvpLabel != null && onQuickRsvp != null) {
+                        FilledTonalButton(
+                            onClick = onQuickRsvp,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = Spacing.sm,
+                                vertical = 2.dp,
+                            ),
+                        ) {
+                            Text(quickRsvpLabel, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }

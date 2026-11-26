@@ -10,7 +10,9 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import org.pjstatecm.graceride.GraceRideApp
 import org.pjstatecm.graceride.data.api.ApiException
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.data.repo.AuthState
+import org.pjstatecm.graceride.domain.KlTime
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -49,7 +51,7 @@ class BackgroundNotificationWorker(
         val uid = me.id
 
         return try {
-            val prefs = runCatching { container.community.notificationPrefs(passive = true) }.getOrNull()?.also {
+            val prefs = runSuspendCatching { container.community.notificationPrefs(passive = true) }.getOrNull()?.also {
                 RealtimeStreamClient.writeCachedPrefs(container.secureStore, it)
             } ?: RealtimeStreamClient.readCachedPrefs(container.secureStore)
             val hideLockDetails = container.secureStore.getString("notif_hide_lock_details") == "1"
@@ -67,23 +69,26 @@ class BackgroundNotificationWorker(
             )
             // Keep home-screen widget fresh when scheduled worker wakes up.
             val nextRide = if (me.can("rides")) {
-                runCatching {
+                runSuspendCatching {
                     container.rides.upcoming(passive = true)
                         .filter { it.status in org.pjstatecm.graceride.domain.RideStatus.active && it.viewer.isPassenger }
-                        .minByOrNull { it.pickupAt }
+                        .minByOrNull { KlTime.sortKey(it.pickupAt) }
                 }.getOrNull()
             } else null
             val nextEvent = if (nextRide == null && me.can("events")) {
-                runCatching { container.events.upcoming(passive = true).firstOrNull() }.getOrNull()
+                runSuspendCatching { container.events.upcoming(passive = true).firstOrNull() }.getOrNull()
             } else null
-            org.pjstatecm.graceride.widget.WidgetSnapshotStore.saveFromHome(
-                applicationContext,
-                signedIn = true,
-                nextRide = nextRide,
-                nextEvent = nextEvent,
-                hideLockDetails = hideLockDetails || (prefs?.hideLockDetails == true),
-            )
-            org.pjstatecm.graceride.widget.refreshGraceRideWidget(applicationContext)
+            val stillSignedIn = (container.auth.state.value as? AuthState.SignedIn)?.me?.id == uid
+            if (stillSignedIn) {
+                org.pjstatecm.graceride.widget.WidgetSnapshotStore.saveFromHome(
+                    applicationContext,
+                    signedIn = true,
+                    nextRide = nextRide,
+                    nextEvent = nextEvent,
+                    hideLockDetails = hideLockDetails || (prefs?.hideLockDetails == true),
+                )
+                org.pjstatecm.graceride.widget.refreshGraceRideWidget(applicationContext)
+            }
             Result.success()
         } catch (e: ApiException) {
             if (e.status == 401 || e.status == 423 || runAttemptCount >= 3) {

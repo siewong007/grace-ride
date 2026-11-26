@@ -21,12 +21,15 @@ import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.data.cache.OfflineCache
+import org.pjstatecm.graceride.data.repo.AdminRepository
 import org.pjstatecm.graceride.data.repo.AuthRepository
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.repo.CommunityRepository
 import org.pjstatecm.graceride.data.repo.EventsRepository
+import org.pjstatecm.graceride.data.repo.PublicFlowRepository
 import org.pjstatecm.graceride.data.repo.RidesRepository
 import org.pjstatecm.graceride.data.repo.SharesRepository
+import org.pjstatecm.graceride.data.repo.TrafficRepository
 import org.pjstatecm.graceride.data.session.EncryptedPrefsStore
 import org.pjstatecm.graceride.data.session.PersistentCookieJar
 import org.pjstatecm.graceride.data.session.SecureStore
@@ -72,17 +75,34 @@ class AppContainer(
             ?: storeOverride?.getString("lang")
             ?: if (Locale.getDefault().language == "zh") "zh" else "en"
 
+    private val _langFlow = MutableStateFlow(cachedLang)
+    val langFlow: StateFlow<String> = _langFlow.asStateFlow()
+
     /** UI + Accept-Language language: "zh" or "en". Defaults to the device locale. */
     var lang: String
         get() = cachedLang
         set(value) {
             cachedLang = value
+            _langFlow.value = value
             if (uiPrefs != null) {
                 uiPrefs.edit { putString("lang", value) }
             } else {
                 secureStore.putString("lang", value)
             }
         }
+
+    fun isLangPendingSync(): Boolean =
+        uiPrefs?.getBoolean(KEY_LANG_PENDING_SYNC, false)
+            ?: (secureStore.getString(KEY_LANG_PENDING_SYNC) == "1")
+
+    fun markLangPendingSync(pending: Boolean) {
+        if (uiPrefs != null) {
+            uiPrefs.edit { putBoolean(KEY_LANG_PENDING_SYNC, pending) }
+        } else {
+            if (pending) secureStore.putString(KEY_LANG_PENDING_SYNC, "1")
+            else secureStore.remove(KEY_LANG_PENDING_SYNC)
+        }
+    }
 
     private val _themeMode = MutableStateFlow(
         (uiPrefs?.getString("theme_mode", null) ?: storeOverride?.getString("theme_mode"))
@@ -100,6 +120,24 @@ class AppContainer(
             secureStore.putString("theme_mode", normalized)
         }
         _themeMode.value = normalized
+    }
+
+    private val _textScale = MutableStateFlow(
+        (uiPrefs?.getString("text_scale", null) ?: storeOverride?.getString("text_scale"))
+            ?.takeIf { it in TEXT_SCALE_MODES }
+            ?: "normal",
+    )
+    val textScale: StateFlow<String> = _textScale.asStateFlow()
+
+    /** Persist the user's preferred in-app text size ("normal", "large", or "xl"). */
+    fun setTextScale(mode: String) {
+        val normalized = mode.takeIf { it in TEXT_SCALE_MODES } ?: "normal"
+        if (uiPrefs != null) {
+            uiPrefs.edit { putString("text_scale", normalized) }
+        } else {
+            secureStore.putString("text_scale", normalized)
+        }
+        _textScale.value = normalized
     }
 
     private val _navAppPref = MutableStateFlow(
@@ -138,12 +176,13 @@ class AppContainer(
     }
 
     /** Debug builds may point at a LAN dev server; release is fixed to HTTPS production. */
+    @Volatile
     var baseUrl: String = (uiPrefs?.getString("base_url_override", null) ?: storeOverride?.getString("base_url_override"))
         ?.takeIf { BuildConfig.DEBUG }
         ?: BuildConfig.API_BASE_URL
         private set
 
-    fun setBaseUrl(url: String) {
+    fun setBaseUrl(url: String, clearSessionIfChanged: Boolean = false) {
         require(BuildConfig.DEBUG) { "Server URL override is only available in debug builds" }
         val trimmed = url.trim()
         val parsed = trimmed.toHttpUrlOrNull()
@@ -151,6 +190,7 @@ class AppContainer(
             "Invalid server URL"
         }
         val normalized = if (trimmed.endsWith("/")) trimmed else "$trimmed/"
+        val changed = normalized != baseUrl
         baseUrl = normalized
         if (BuildConfig.DEBUG) {
             if (uiPrefs != null) {
@@ -159,19 +199,32 @@ class AppContainer(
                 secureStore.putString("base_url_override", normalized)
             }
         }
+        if (clearSessionIfChanged && changed) {
+            val hasSession = auth.me != null ||
+                cookieJar.hasCookies() ||
+                secureStore.getString("cached_me_v1") != null
+            if (hasSession) {
+                auth.onUnauthorized()
+                runCatching { okHttp.cache?.evictAll() }
+            }
+        }
         rebuildApi()
     }
 
     /** Warms up Keystore-backed storage and migrates legacy non-secret UI prefs off the main thread. */
     fun warmUpStorage() {
         (secureStore as? EncryptedPrefsStore)?.warmUp()
-        biometric.reloadFromStore()
+        biometric.ensureLoaded()
         cookieJar.hasCookies()
         uiPrefs?.let { prefs ->
             if (!prefs.contains("lang")) {
                 secureStore.getString("lang")?.let { saved ->
                     prefs.edit { putString("lang", saved) }
                     cachedLang = saved
+                    _langFlow.value = saved
+                    appContext?.let { ctx ->
+                        org.pjstatecm.graceride.notifications.NotificationHelper.ensureChannels(ctx, saved)
+                    }
                 }
             }
             if (!prefs.contains("theme_mode")) {
@@ -182,7 +235,15 @@ class AppContainer(
             }
             if (BuildConfig.DEBUG && !prefs.contains("base_url_override")) {
                 secureStore.getString("base_url_override")?.let { saved ->
-                    prefs.edit { putString("base_url_override", saved) }
+                    val parsed = saved.trim().toHttpUrlOrNull()
+                    if (parsed != null && parsed.scheme in setOf("http", "https") && parsed.host.isNotBlank()) {
+                        val normalized = if (saved.trim().endsWith("/")) saved.trim() else "${saved.trim()}/"
+                        prefs.edit { putString("base_url_override", normalized) }
+                        if (normalized != baseUrl) {
+                            baseUrl = normalized
+                            rebuildApi()
+                        }
+                    }
                 }
             }
         }
@@ -228,12 +289,16 @@ class AppContainer(
     /** Callback wired by [org.pjstatecm.graceride.GraceRideApp] to evict image caches on sign-out. */
     @Volatile
     var onSessionCleared: (() -> Unit)? = null
+    @Volatile
     var onSessionLocked: (() -> Unit)? = null
 
     val rides: RidesRepository = RidesRepository(apiProvider, authEvents)
     val events: EventsRepository = EventsRepository(apiProvider, authEvents)
     val shares: SharesRepository = SharesRepository(apiProvider, authEvents)
     val community: CommunityRepository = CommunityRepository(apiProvider, authEvents)
+    val traffic: TrafficRepository = TrafficRepository(apiProvider, authEvents)
+    val admin: AdminRepository = AdminRepository(apiProvider, authEvents)
+    val publicFlow: PublicFlowRepository = PublicFlowRepository(apiProvider)
     val auth: AuthRepository = AuthRepository(
         apiProvider,
         authEvents,
@@ -277,6 +342,22 @@ class AppContainer(
             }
             onSessionLocked?.invoke()
         },
+        onUserSwitched = { prevId ->
+            rides.clearAreasCache()
+            offlineCache.clearUser(prevId)
+            appContext?.let { ctx ->
+                runCatching { androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll() }
+                runCatching {
+                    org.pjstatecm.graceride.service.LiveTripLocationService.stop(ctx, notifyServer = false)
+                }
+                runCatching {
+                    androidx.core.content.pm.ShortcutManagerCompat.removeDynamicShortcuts(ctx, listOf("drive_hub"))
+                }
+                org.pjstatecm.graceride.widget.WidgetSnapshotStore.clear(ctx)
+                appScope.launch { org.pjstatecm.graceride.widget.refreshGraceRideWidget(ctx) }
+            }
+            onSessionCleared?.invoke()
+        },
     )
 
     init {
@@ -285,13 +366,17 @@ class AppContainer(
                 when (event) {
                     org.pjstatecm.graceride.data.api.AuthEvent.Unauthorized -> {
                         appContext?.let {
-                            org.pjstatecm.graceride.service.LiveTripLocationService.stop(it, notifyServer = false)
+                            runCatching {
+                                org.pjstatecm.graceride.service.LiveTripLocationService.stop(it, notifyServer = false)
+                            }
                         }
                         auth.onUnauthorized()
                     }
                     org.pjstatecm.graceride.data.api.AuthEvent.Locked -> {
                         appContext?.let {
-                            org.pjstatecm.graceride.service.LiveTripLocationService.stop(it, notifyServer = false)
+                            runCatching {
+                                org.pjstatecm.graceride.service.LiveTripLocationService.stop(it, notifyServer = false)
+                            }
                         }
                         auth.onLocked()
                     }
@@ -328,7 +413,9 @@ class AppContainer(
 
     companion object {
         private val THEME_MODES = setOf("system", "light", "dark")
+        private val TEXT_SCALE_MODES = setOf("normal", "large", "xl")
         private val NAV_APP_MODES = setOf("ask", "waze", "google")
         private const val HTTP_CACHE_BYTES = 10L * 1024L * 1024L
+        private const val KEY_LANG_PENDING_SYNC = "lang_pending_sync"
     }
 }

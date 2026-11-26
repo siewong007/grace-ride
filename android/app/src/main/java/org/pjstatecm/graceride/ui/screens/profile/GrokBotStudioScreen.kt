@@ -2,11 +2,8 @@ package org.pjstatecm.graceride.ui.screens.profile
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Build
-import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -67,6 +64,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -101,7 +99,9 @@ fun GrokBotStudioScreen(
     val snackbar = remember { SnackbarHostState() }
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-    val savedSpec = GrokBotSpec.parse(container.auth.me?.avatarIcon) ?: GrokBotSpec.DEFAULT
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
+    val savedSpec = GrokBotSpec.parse(me?.avatarIcon) ?: GrokBotSpec.DEFAULT
     var shape by rememberSaveable(initialShape, savedSpec.shape) {
         mutableStateOf(initialShape?.takeIf { it in GrokBotSpec.SHAPES } ?: savedSpec.shape)
     }
@@ -172,51 +172,36 @@ fun GrokBotStudioScreen(
     }
 
     fun copyImageToClipboard() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            scope.launch {
-                val clipUri = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val bmp = renderGrokBotPngBitmap(spec, 512)
-                        try {
-                            val values = ContentValues().apply {
-                                put(MediaStore.Images.Media.DISPLAY_NAME, spec.filename("png"))
-                                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/GraceRide")
-                                put(MediaStore.Images.Media.IS_PENDING, 1)
+        scope.launch {
+            val clipUri = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bmp = renderGrokBotPngBitmap(spec, 512)
+                    try {
+                        val dir = java.io.File(context.cacheDir, "shared_avatars").apply { mkdirs() }
+                        dir.listFiles()?.forEach { old -> if (old.isFile) old.delete() }
+                        val outFile = java.io.File(dir, spec.filename("png"))
+                        outFile.outputStream().use { stream ->
+                            if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                                error("PNG compress failed")
                             }
-                            val resolver = context.contentResolver
-                            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                                ?: error("Insert failed")
-                            try {
-                                val out = resolver.openOutputStream(uri) ?: error("Open stream failed")
-                                out.use { stream ->
-                                    if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
-                                        error("PNG compress failed")
-                                    }
-                                }
-                                values.clear()
-                                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                                resolver.update(uri, values, null, null)
-                                uri
-                            } catch (t: Throwable) {
-                                resolver.delete(uri, null, null)
-                                throw t
-                            }
-                        } finally {
-                            bmp.recycle()
                         }
-                    }.getOrNull()
-                }
-                if (clipUri != null) {
-                    val cm = context.getSystemService(ClipboardManager::class.java)
-                    cm?.setPrimaryClip(ClipData.newUri(context.contentResolver, "Grok Bot", clipUri))
-                    snackbar.showSnackbar(copiedImageMsg)
-                } else {
-                    snackbar.showSnackbar(exportFailedMsg)
-                }
+                        androidx.core.content.FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            outFile,
+                        )
+                    } finally {
+                        bmp.recycle()
+                    }
+                }.getOrNull()
             }
-        } else {
-            createPngLauncher.launch(spec.filename("png"))
+            if (clipUri != null) {
+                val cm = context.getSystemService(ClipboardManager::class.java)
+                cm?.setPrimaryClip(ClipData.newUri(context.contentResolver, "Grok Bot", clipUri))
+                snackbar.showSnackbar(copiedImageMsg)
+            } else {
+                snackbar.showSnackbar(exportFailedMsg)
+            }
         }
     }
 

@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -142,8 +143,9 @@ internal fun GrokBotShapeAvatar(
     avatarColor: String? = null,
     shape: String = "hexagon",
 ) {
-    val transition = rememberInfiniteTransition(label = "grok_bot")
-    val bodyTiltState = transition.animateFloat(
+    val animOn = animatorsEnabled()
+    val transition = if (animOn) rememberInfiniteTransition(label = "grok_bot") else null
+    val bodyTiltState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -162,8 +164,8 @@ internal fun GrokBotShapeAvatar(
             },
         ),
         label = "grok_tilt",
-    )
-    val lookXState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val lookXState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -182,8 +184,8 @@ internal fun GrokBotShapeAvatar(
             },
         ),
         label = "grok_look_x",
-    )
-    val lookYState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val lookYState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -202,8 +204,8 @@ internal fun GrokBotShapeAvatar(
             },
         ),
         label = "grok_look_y",
-    )
-    val leftScaleYState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val leftScaleYState: State<Float> = transition?.animateFloat(
         initialValue = 1f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -226,8 +228,8 @@ internal fun GrokBotShapeAvatar(
             },
         ),
         label = "grok_eye_l",
-    )
-    val rightScaleYState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(1f) }
+    val rightScaleYState: State<Float> = transition?.animateFloat(
         initialValue = 1f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -250,8 +252,8 @@ internal fun GrokBotShapeAvatar(
             },
         ),
         label = "grok_eye_r",
-    )
-    val rightRotState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(1f) }
+    val rightRotState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -266,13 +268,14 @@ internal fun GrokBotShapeAvatar(
             },
         ),
         label = "grok_wink_rot",
-    )
+    ) ?: remember { mutableFloatStateOf(0f) }
     val skin = AvatarStyle.grokSkinColor(avatarColor)
     val ring = AvatarStyle.grokRingColor(avatarColor)
     val eyeColor = AvatarStyle.grokEyeColor(avatarColor)
     val drawCache = remember { AvatarDrawCache() }
 
     Canvas(modifier = modifier) {
+        if (size.width <= 0f || size.height <= 0f) return@Canvas
         val sx = size.width / 48f
         val sy = size.height / 48f
         val unit = minOf(sx, sy)
@@ -321,8 +324,9 @@ internal fun MuseBotShapeAvatar(
     avatarColor: String? = null,
     shape: String = "cloud",
 ) {
-    val transition = rememberInfiniteTransition(label = "muse_bot")
-    val bodyTiltState = transition.animateFloat(
+    val animOn = animatorsEnabled()
+    val transition = if (animOn) rememberInfiniteTransition(label = "muse_bot") else null
+    val bodyTiltState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -339,8 +343,8 @@ internal fun MuseBotShapeAvatar(
             },
         ),
         label = "muse_tilt",
-    )
-    val faceXState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val faceXState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -357,8 +361,8 @@ internal fun MuseBotShapeAvatar(
             },
         ),
         label = "muse_face_x",
-    )
-    val faceYState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val faceYState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -375,8 +379,8 @@ internal fun MuseBotShapeAvatar(
             },
         ),
         label = "muse_face_y",
-    )
-    val eyeScaleYState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val eyeScaleYState: State<Float> = transition?.animateFloat(
         initialValue = 1f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -391,8 +395,8 @@ internal fun MuseBotShapeAvatar(
             },
         ),
         label = "muse_eye_scale_y",
-    )
-    val happyTiltState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(1f) }
+    val happyTiltState: State<Float> = transition?.animateFloat(
         initialValue = 0f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -407,8 +411,8 @@ internal fun MuseBotShapeAvatar(
             },
         ),
         label = "muse_happy_tilt",
-    )
-    val sparkAlphaState = transition.animateFloat(
+    ) ?: remember { mutableFloatStateOf(0f) }
+    val sparkAlphaState: State<Float> = transition?.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.35f,
         animationSpec = infiniteRepeatable(
@@ -423,7 +427,7 @@ internal fun MuseBotShapeAvatar(
             },
         ),
         label = "muse_spark_alpha",
-    )
+    ) ?: remember { mutableFloatStateOf(0.35f) }
     val colorKey = avatarColor?.substringBefore(':')
     val (plush, plushShade) = AvatarStyle.musePlushColors(colorKey)
     val sparkColor = if (colorKey == "white") Color(0xFFF59E0B) else AvatarStyle.grokSkinColor(colorKey)
@@ -433,6 +437,7 @@ internal fun MuseBotShapeAvatar(
     val drawCache = remember { AvatarDrawCache() }
 
     Canvas(modifier = modifier) {
+        if (size.width <= 0f || size.height <= 0f) return@Canvas
         val sx = size.width / 48f
         val sy = size.height / 48f
         val unit = minOf(sx, sy)

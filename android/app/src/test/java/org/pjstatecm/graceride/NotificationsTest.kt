@@ -20,18 +20,22 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 import org.pjstatecm.graceride.data.api.Me
+import org.pjstatecm.graceride.data.api.NotificationItem
 import org.pjstatecm.graceride.data.api.NotificationPageDto
 import org.pjstatecm.graceride.data.api.NotificationPrefsDto
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.notifications.NotificationHelper
 import org.pjstatecm.graceride.notifications.RealtimeStreamClient
 import org.pjstatecm.graceride.ui.NotifDestination
 import org.pjstatecm.graceride.ui.NotifLinkRouter
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.screens.notifications.NotificationsViewModel
 import org.pjstatecm.graceride.ui.screens.profile.ProfileViewModel
+import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -68,7 +72,14 @@ class NotificationsTest {
         assertEquals(NotifDestination.Native(Routes.DRIVER_SETTINGS), NotifLinkRouter.resolve("/driver"))
         assertEquals(NotifDestination.Native(Routes.PROFILE), NotifLinkRouter.resolve("/me"))
         assertEquals(NotifDestination.Web("/help?ride=12"), NotifLinkRouter.resolve("/help?ride=12"))
-        assertEquals(NotifDestination.Web("/admin/rides"), NotifLinkRouter.resolve("/admin/rides"))
+        assertEquals(NotifDestination.Native(Routes.traffic(tab = "rides")), NotifLinkRouter.resolve("/admin/rides"))
+        assertEquals(NotifDestination.Native(Routes.rideDetail(12L)), NotifLinkRouter.resolve("/admin/rides/12"))
+        assertEquals(NotifDestination.Native(Routes.traffic()), NotifLinkRouter.resolve("/admin/traffic"))
+        assertEquals(
+            NotifDestination.Native(Routes.planTransport(9L, draftId = 4L)),
+            NotifLinkRouter.resolve("/admin/events/9/plan?draft=4"),
+        )
+        assertEquals(NotifDestination.Native(Routes.traffic(tab = "live")), NotifLinkRouter.resolve("/admin/live"))
         assertEquals(NotifDestination.None, NotifLinkRouter.resolve("//evil.example/phish"))
         assertEquals(NotifDestination.None, NotifLinkRouter.resolve("/api/auth/logout"))
         assertEquals(NotifDestination.None, NotifLinkRouter.resolve("javascript:alert(1)"))
@@ -122,9 +133,13 @@ class NotificationsTest {
         val prefs = apiJson.decodeFromString<NotificationPrefsDto>(prefsJson)
         assertTrue(prefs.pushOptIn)
         assertFalse(prefs.whatsappOptIn)
+        assertEquals("123456789", prefs.telegramChatId)
+        assertTrue(prefs.telegramBlocked)
+        assertEquals(45, prefs.readinessPromptMins)
         assertEquals(90, prefs.driverRemindMins)
         assertEquals(listOf("cost"), prefs.mutedCategories)
         assertEquals("22:00", prefs.quietHoursStart)
+        assertEquals("07:00", prefs.quietHoursEnd)
         assertTrue(prefs.hideLockDetails)
     }
 
@@ -384,7 +399,7 @@ class NotificationsTest {
         assertEquals(NotifDestination.None, NotifLinkRouter.resolveFor("/admin", member))
         assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolveFor("/settlements", member))
         assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolveFor("/settlements/5", member))
-        assertEquals(NotifDestination.Native(Routes.PROXY_RIDERS), NotifLinkRouter.resolveFor("/me/family", member))
+        assertEquals(NotifDestination.Native(Routes.FAMILY), NotifLinkRouter.resolveFor("/me/family", member))
         assertEquals(NotifDestination.Native(Routes.eventDetail(9L)), NotifLinkRouter.resolveFor("/events/9", member))
 
         val finance = Me(
@@ -401,9 +416,20 @@ class NotificationsTest {
             name = "Transport",
             email = "transport@example.org",
             roles = listOf("transport"),
-            permissions = listOf("admin_rides.view"),
+            permissions = listOf("admin_rides.view", "admin_plan.view", "admin_live.view"),
         )
-        assertEquals(NotifDestination.Web("/admin/rides"), NotifLinkRouter.resolveFor("/admin/rides", transport))
+        assertEquals(
+            NotifDestination.Native(Routes.traffic(tab = "rides")),
+            NotifLinkRouter.resolveFor("/admin/rides", transport),
+        )
+        assertEquals(
+            NotifDestination.Native(Routes.planTransport(4L, draftId = 2L)),
+            NotifLinkRouter.resolveFor("/admin/events/4/plan?draft=2", transport),
+        )
+        assertEquals(
+            NotifDestination.Native(Routes.traffic(tab = "live")),
+            NotifLinkRouter.resolveFor("/admin/live", transport),
+        )
     }
 
     @Test fun notificationsViewModelStageDeleteSupportsUndoAndCommit() = runBlocking {
@@ -477,5 +503,139 @@ class NotificationsTest {
         val activeReq = server.takeRequest(5, TimeUnit.SECONDS)
         assertNotNull(activeReq)
         assertEquals(null, activeReq!!.getHeader("X-Passive-Poll"))
+    }
+
+    @Test fun notificationHelperCoversAllCategoriesAndroidCategoryPriorityAndChatParsing() {
+        val allBackendCategories = listOf(
+            "ride",
+            "event",
+            "cost",
+            "help",
+            "family",
+            "admin",
+            "announcement",
+            "chat",
+            "general",
+        )
+        allBackendCategories.forEach { cat ->
+            assertNotNull("Missing label resource for category '$cat'", NotificationHelper.categoryLabelRes(cat))
+        }
+        assertEquals("live_trip_location", NotificationHelper.CHANNEL_LIVE_LOCATION)
+
+        assertEquals(
+            androidx.core.app.NotificationCompat.CATEGORY_MESSAGE,
+            NotificationHelper.androidCategoryFor("chat", "trip_chat", "/rides/3"),
+        )
+        assertEquals(
+            androidx.core.app.NotificationCompat.CATEGORY_REMINDER,
+            NotificationHelper.androidCategoryFor("ride", "ride_reminder", "/rides/3?action=readiness"),
+        )
+        assertEquals(
+            androidx.core.app.NotificationCompat.CATEGORY_EVENT,
+            NotificationHelper.androidCategoryFor("event", "general", "/events/1"),
+        )
+        assertEquals(
+            androidx.core.app.NotificationCompat.CATEGORY_STATUS,
+            NotificationHelper.androidCategoryFor("cost", "general", "/costs"),
+        )
+
+        assertEquals(
+            androidx.core.app.NotificationCompat.PRIORITY_HIGH,
+            NotificationHelper.priorityFor(NotificationHelper.CHANNEL_RIDES_URGENT),
+        )
+        assertEquals(
+            androidx.core.app.NotificationCompat.PRIORITY_LOW,
+            NotificationHelper.priorityFor(NotificationHelper.CHANNEL_COMMUNITY),
+        )
+        assertEquals(
+            androidx.core.app.NotificationCompat.PRIORITY_DEFAULT,
+            NotificationHelper.priorityFor(NotificationHelper.CHANNEL_CHAT),
+        )
+
+        val chatItem = NotificationItem(
+            id = 55L,
+            title = "New trip chat message",
+            body = "Brother Tan: I am waiting outside the main gate",
+            link = "/rides/9",
+            category = "chat",
+            eventType = "trip_chat",
+        )
+        assertEquals(
+            "Brother Tan" to "I am waiting outside the main gate",
+            NotificationHelper.parseChatSenderAndText(chatItem, "Grace Ride"),
+        )
+        val plainItem = chatItem.copy(body = "See you soon")
+        assertEquals(
+            "New trip chat message" to "See you soon",
+            NotificationHelper.parseChatSenderAndText(plainItem, "Grace Ride"),
+        )
+    }
+
+    @Test fun klTimeNotificationDateIncludesCrossYearAndEpochMillis() {
+        val epoch = KlTime.parseEpochMillis("2026-11-26 08:30:00")
+        assertNotNull(epoch)
+        assertEquals(
+            "26 Nov",
+            KlTime.notificationDate("2026-11-26 08:30:00", locale = Locale.ENGLISH, referenceYear = 2026),
+        )
+        assertEquals(
+            "26 Nov 2025",
+            KlTime.notificationDate("2025-11-26 08:30:00", locale = Locale.ENGLISH, referenceYear = 2026),
+        )
+        assertEquals(
+            "11月26日",
+            KlTime.notificationDate("2026-11-26 08:30:00", locale = Locale.SIMPLIFIED_CHINESE, referenceYear = 2026),
+        )
+        assertEquals(
+            "2025年11月26日",
+            KlTime.notificationDate("2025-11-26 08:30:00", locale = Locale.SIMPLIFIED_CHINESE, referenceYear = 2026),
+        )
+    }
+
+    @Test fun appContainerTracksPendingLanguageSync() {
+        val store = InMemoryStore()
+        val langContainer = AppContainer(null, store)
+        assertFalse(langContainer.isLangPendingSync())
+        langContainer.markLangPendingSync(true)
+        assertTrue(langContainer.isLangPendingSync())
+        langContainer.markLangPendingSync(false)
+        assertFalse(langContainer.isLangPendingSync())
+    }
+
+    @Test fun syncNotificationsSurfacesBurstAboveFiveItemsWithoutDropping() = runBlocking {
+        val store = InMemoryStore()
+        val syncContainer = AppContainer(null, store)
+        syncContainer.setBaseUrl(server.url("/").toString())
+
+        server.enqueue(
+            json("""{"items":[{"id":100,"title":"Old","body":"b","link":"/rides/1","read":true,"created_at":"2026-11-25 08:00:00","category":"ride"}],"next_before":null,"unread":0}"""),
+        )
+        RealtimeStreamClient.syncNotifications(
+            community = syncContainer.community,
+            auth = syncContainer.auth,
+            store = store,
+            userId = 1L,
+            surfaceNew = false,
+        )
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+
+        val burstItems = (107 downTo 101).joinToString(",") { id ->
+            val min = (id - 100).toString().padStart(2, '0')
+            """{"id":$id,"title":"Alert $id","body":"Body $id","link":"/rides/$id","read":false,"created_at":"2026-11-26 09:$min:00","category":"ride"}"""
+        }
+        server.enqueue(json("""{"items":[$burstItems],"next_before":null,"unread":7}"""))
+        val res = RealtimeStreamClient.syncNotifications(
+            community = syncContainer.community,
+            auth = syncContainer.auth,
+            store = store,
+            userId = 1L,
+            surfaceNew = true,
+        )
+        val pollReq = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(pollReq)
+        assertTrue(pollReq!!.path!!.contains("limit=15"))
+        assertEquals(7, res.surfaced.size)
+        assertEquals((101L..107L).toList(), res.surfaced.map { it.id })
+        assertEquals(107L, res.newWatermark)
     }
 }

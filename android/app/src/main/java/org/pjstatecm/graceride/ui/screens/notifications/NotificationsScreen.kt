@@ -1,7 +1,18 @@
 package org.pjstatecm.graceride.ui.screens.notifications
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +24,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,12 +40,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.DoneAll
@@ -44,6 +58,8 @@ import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.NotificationsNone
+import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -70,25 +86,33 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,10 +132,13 @@ import org.pjstatecm.graceride.data.api.NotificationItem
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.notifications.NotificationHelper
+import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.NotifDestination
 import org.pjstatecm.graceride.ui.NotifLinkRouter
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.animatorsEnabled
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -121,6 +148,7 @@ import org.pjstatecm.graceride.ui.navigateRoute
 import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.Spacing
 import org.pjstatecm.graceride.ui.theme.tabular
+import java.util.Locale
 
 data class NotifUiState(
     val loading: Boolean = true,
@@ -448,39 +476,31 @@ private val categoryChips = listOf(
     NotifCategoryMeta("announcement", R.string.notif_cat_announcement, Icons.Outlined.Campaign),
 )
 
-private fun categoryLabelRes(category: String): Int? = when (category) {
-    "ride" -> R.string.notif_cat_ride
-    "event" -> R.string.notif_cat_event
-    "cost" -> R.string.notif_cat_cost
-    "help" -> R.string.notif_cat_help
-    "family" -> R.string.notif_cat_family
-    "admin" -> R.string.notif_cat_admin
-    "announcement" -> R.string.notif_cat_announcement
-    else -> null
+private fun categoryLabelRes(category: String): Int? = NotificationHelper.categoryLabelRes(category)
+
+private fun notifIconFor(item: NotificationItem): ImageVector = when {
+    item.category == "chat" || item.eventType == "trip_chat" -> Icons.AutoMirrored.Outlined.Chat
+    item.category == "ride" -> Icons.Outlined.DirectionsCar
+    item.category == "event" -> Icons.Outlined.Event
+    item.category == "cost" -> Icons.AutoMirrored.Outlined.ReceiptLong
+    item.category == "help" -> Icons.AutoMirrored.Outlined.HelpOutline
+    item.category == "family" -> Icons.Outlined.FavoriteBorder
+    item.category == "admin" -> Icons.Outlined.AdminPanelSettings
+    item.category == "announcement" -> Icons.Outlined.Campaign
+    item.link?.contains("chat") == true -> Icons.AutoMirrored.Outlined.Chat
+    item.link?.contains("ride") == true -> Icons.Outlined.DirectionsCar
+    item.link?.contains("event") == true -> Icons.Outlined.Event
+    item.link?.contains("cost") == true || item.link?.contains("settlement") == true ->
+        Icons.AutoMirrored.Outlined.ReceiptLong
+    else -> Icons.Outlined.Notifications
 }
 
-private fun notifIconFor(item: NotificationItem): ImageVector = when (item.category) {
-    "ride" -> Icons.Outlined.DirectionsCar
-    "event" -> Icons.Outlined.Event
-    "cost" -> Icons.AutoMirrored.Outlined.ReceiptLong
-    "help" -> Icons.AutoMirrored.Outlined.HelpOutline
-    "family" -> Icons.Outlined.FavoriteBorder
-    "admin" -> Icons.Outlined.AdminPanelSettings
-    "announcement" -> Icons.Outlined.Campaign
-    else -> when {
-        item.link?.contains("ride") == true -> Icons.Outlined.DirectionsCar
-        item.link?.contains("event") == true -> Icons.Outlined.Event
-        item.link?.contains("cost") == true || item.link?.contains("settlement") == true -> Icons.AutoMirrored.Outlined.ReceiptLong
-        else -> Icons.Outlined.Notifications
-    }
-}
-
-private fun notifTimestampText(createdAt: String, sameDayGroup: Boolean): String {
+private fun notifTimestampText(createdAt: String, sameDayGroup: Boolean, locale: Locale): String {
     if (KlTime.parse(createdAt) == null) return createdAt
     return if (sameDayGroup) {
         KlTime.displayTime(createdAt)
     } else {
-        "${KlTime.dayMonthShort(createdAt)} · ${KlTime.displayTime(createdAt)}"
+        "${KlTime.notificationDate(createdAt, locale)} · ${KlTime.displayTime(createdAt)}"
     }
 }
 
@@ -499,6 +519,28 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val composeLocale = LocalConfiguration.current.locales.let {
+        if (it.isEmpty) Locale.getDefault() else it[0]
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var osNotifsEnabled by remember { mutableStateOf(NotificationHelper.areNotificationsEnabled(context)) }
+    var dismissedOsBanner by remember { mutableStateOf(false) }
+    var permDeniedOnce by remember { mutableStateOf(false) }
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        osNotifsEnabled = NotificationHelper.areNotificationsEnabled(context)
+        if (!granted) permDeniedOnce = true
+    }
+    DisposableEffect(lifecycleOwner, context) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                osNotifsEnabled = NotificationHelper.areNotificationsEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     val hasUnread = state.unreadCount > 0 || state.items.any { !it.read }
     val deletedMsg = stringResource(R.string.notif_deleted)
     val undoLabel = stringResource(R.string.notif_undo)
@@ -567,6 +609,12 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                             Spacer(Modifier.width(4.dp))
                             Text(stringResource(R.string.notif_mark_all_read))
                         }
+                    }
+                    IconButton(onClick = { nav.navigate(AppRoute.NotificationSettings) }) {
+                        Icon(
+                            Icons.Outlined.Settings,
+                            contentDescription = stringResource(R.string.notif_settings_a11y),
+                        )
                     }
                 },
             )
@@ -651,6 +699,83 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                     modifier = Modifier.padding(top = Spacing.xxs),
                 )
 
+                AnimatedVisibility(
+                    visible = !osNotifsEnabled && !dismissedOsBanner,
+                    enter = expandVertically(tween(200)) + fadeIn(tween(180)),
+                    exit = shrinkVertically(tween(160)) + fadeOut(tween(140)),
+                ) {
+                    val canRequestPrompt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        !NotificationHelper.hasPostPermission(context) &&
+                        !permDeniedOnce
+                    OutlinedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = Spacing.sm, top = Spacing.xs, bottom = Spacing.xs, end = Spacing.xxs),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
+                            Icon(
+                                Icons.Outlined.NotificationsOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(top = 2.dp).size(20.dp),
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.notif_os_disabled_title),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    stringResource(R.string.notif_os_disabled_body),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                TextButton(
+                                    onClick = {
+                                        UiHaptics.tick(view)
+                                        if (canRequestPrompt) {
+                                            permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        } else {
+                                            runCatching {
+                                                context.startActivity(NotificationHelper.openNotificationSettingsIntent(context))
+                                            }
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp),
+                                    modifier = Modifier.defaultMinSize(minHeight = 32.dp),
+                                ) {
+                                    Text(
+                                        stringResource(
+                                            if (canRequestPrompt) R.string.notif_os_enable_btn
+                                            else R.string.notif_os_open_settings,
+                                        ),
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { dismissedOsBanner = true },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = stringResource(R.string.common_close),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
                 val viewMode = when {
                     state.loading -> "loading"
                     state.error != null && state.items.isEmpty() -> "error"
@@ -666,7 +791,7 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                 ) { mode ->
                     when (mode) {
                         "loading" -> SkeletonLoadingList(count = 5)
-                        "error" -> ErrorView(state.error ?: "", { vm.load(reset = true) }, Modifier.fillMaxSize())
+                        "error" -> ErrorView(state.error ?: "", modifier = Modifier.fillMaxSize(), onRetry = { vm.load(reset = true) })
                         "empty" -> Box(
                             Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                             contentAlignment = Alignment.Center,
@@ -744,6 +869,7 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                                         NotificationRowCard(
                                             item = item,
                                             sameDayGroup = sameDayGroup,
+                                            locale = composeLocale,
                                             showCategoryBadge = state.category == null && (item.category != "admin" || canSeeAdmin),
                                             resolvedDest = resolvedDest,
                                             restoreTick = state.restoreTick,
@@ -819,6 +945,7 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
 private fun NotificationRowCard(
     item: NotificationItem,
     sameDayGroup: Boolean,
+    locale: Locale,
     showCategoryBadge: Boolean,
     resolvedDest: NotifDestination,
     restoreTick: Int,
@@ -835,17 +962,23 @@ private fun NotificationRowCard(
         NotifDestination.None -> false
     }
     var menuExpanded by remember { mutableStateOf(false) }
+    var expanded by remember(item.id) { mutableStateOf(false) }
+    var hasOverflow by remember(item.id, item.body) { mutableStateOf(false) }
+    val readStateDesc = stringResource(if (unread) R.string.notif_a11y_unread else R.string.notif_a11y_read)
+
+    val currentOnToggleRead by rememberUpdatedState(onToggleRead)
+    val currentOnDelete by rememberUpdatedState(onDelete)
 
     @Suppress("DEPRECATION") // confirmValueChange lets StartToEnd snap back immediately after toggling read.
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
                 SwipeToDismissBoxValue.StartToEnd -> {
-                    onToggleRead()
+                    currentOnToggleRead()
                     false
                 }
                 SwipeToDismissBoxValue.EndToStart -> {
-                    onDelete()
+                    currentOnDelete()
                     true
                 }
                 SwipeToDismissBoxValue.Settled -> true
@@ -886,11 +1019,16 @@ private fun NotificationRowCard(
         modifier = modifier.fillMaxWidth(),
         backgroundContent = {
             val dir = dismissState.dismissDirection
-            val bgColor = when (dir) {
+            val targetBgColor = when (dir) {
                 SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.primaryContainer
                 SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.errorContainer
                 SwipeToDismissBoxValue.Settled -> Color.Transparent
             }
+            val bgColor by animateColorAsState(
+                targetValue = targetBgColor,
+                animationSpec = if (animatorsEnabled()) tween(150) else snap(),
+                label = "notif_swipe_bg",
+            )
             val align = if (dir == SwipeToDismissBoxValue.StartToEnd) {
                 Alignment.CenterStart
             } else {
@@ -944,12 +1082,21 @@ private fun NotificationRowCard(
     ) {
         OutlinedCard(
             onClick = {
-                if (unread || isNavigable) onOpen()
+                if (isNavigable) {
+                    onOpen()
+                } else if (hasOverflow || expanded) {
+                    expanded = !expanded
+                    if (unread) onOpen()
+                } else if (unread) {
+                    onOpen()
+                }
             },
             shape = MaterialTheme.shapes.medium,
             border = border,
             colors = CardDefaults.outlinedCardColors(containerColor = containerColor),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { stateDescription = readStateDesc },
         ) {
             Row(
                 modifier = Modifier
@@ -1014,7 +1161,7 @@ private fun NotificationRowCard(
                                 modifier = Modifier.weight(1f),
                             )
                             Text(
-                                notifTimestampText(item.createdAt, sameDayGroup),
+                                notifTimestampText(item.createdAt, sameDayGroup, locale),
                                 style = MaterialTheme.typography.labelSmall.tabular(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -1086,9 +1233,26 @@ private fun NotificationRowCard(
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },
-                                maxLines = 3,
+                                maxLines = if (expanded) Int.MAX_VALUE else 3,
                                 overflow = TextOverflow.Ellipsis,
+                                onTextLayout = { res ->
+                                    if (!expanded) hasOverflow = res.hasVisualOverflow
+                                },
                             )
+                            if (hasOverflow || expanded) {
+                                TextButton(
+                                    onClick = { expanded = !expanded },
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp),
+                                    modifier = Modifier.defaultMinSize(minHeight = 28.dp),
+                                ) {
+                                    Text(
+                                        stringResource(
+                                            if (expanded) R.string.common_show_less else R.string.common_read_more,
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                            }
                         }
 
                         val catLabel = if (showCategoryBadge) categoryLabelRes(item.category) else null
