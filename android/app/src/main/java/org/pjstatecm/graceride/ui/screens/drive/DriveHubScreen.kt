@@ -107,6 +107,7 @@ import org.pjstatecm.graceride.ui.theme.tabular
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: DriveHubViewModel = viewModel(factory = DriveHubViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()

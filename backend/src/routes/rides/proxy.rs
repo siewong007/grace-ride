@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, not_found, AppResult};
+use crate::error::{bad, conflict, not_found, AppResult};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{now, require, ErrorKey};
@@ -166,6 +166,19 @@ pub(super) async fn create_proxy_rider(
         },
     )
     .await?;
+    let dup: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM proxy_riders
+             WHERE user_id = $1 AND LOWER(BTRIM(name)) = LOWER(BTRIM($2))
+         )",
+    )
+    .bind(u.id)
+    .bind(name)
+    .fetch_one(&st.db)
+    .await?;
+    if dup {
+        return Err(conflict(u.lang, ErrorKey::InvalidAction));
+    }
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO proxy_riders (user_id, name, phone, relationship, notes, area_id, pickup_address, gate_notes, caregiver_user_id, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
@@ -182,7 +195,14 @@ pub(super) async fn create_proxy_rider(
     .bind(now())
     .bind(now())
     .fetch_one(&st.db)
-    .await?;
+    .await
+    .map_err(|e| {
+        if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("23505") {
+            conflict(u.lang, ErrorKey::InvalidAction)
+        } else {
+            e.into()
+        }
+    })?;
     Ok(Json(json!({ "id": id, "ok": true })))
 }
 
@@ -217,6 +237,20 @@ pub(super) async fn update_proxy_rider(
         },
     )
     .await?;
+    let dup: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM proxy_riders
+             WHERE user_id = $1 AND id <> $2 AND LOWER(BTRIM(name)) = LOWER(BTRIM($3))
+         )",
+    )
+    .bind(u.id)
+    .bind(id)
+    .bind(name)
+    .fetch_one(&st.db)
+    .await?;
+    if dup {
+        return Err(conflict(u.lang, ErrorKey::InvalidAction));
+    }
     let row: Option<ProxyRiderRow> = sqlx::query_as(
         "UPDATE proxy_riders
          SET name=$1, phone=$2, relationship=$3, notes=$4, area_id=$5, pickup_address=$6, gate_notes=$7, caregiver_user_id=$8, updated_at=$9
@@ -235,7 +269,14 @@ pub(super) async fn update_proxy_rider(
     .bind(id)
     .bind(u.id)
     .fetch_optional(&st.db)
-    .await?;
+    .await
+    .map_err(|e| {
+        if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("23505") {
+            conflict(u.lang, ErrorKey::InvalidAction)
+        } else {
+            e.into()
+        }
+    })?;
     let Some(row) = row else {
         return Err(not_found(u.lang));
     };

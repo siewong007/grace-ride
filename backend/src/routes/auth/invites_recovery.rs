@@ -73,9 +73,10 @@ pub(super) async fn recovery_request(
             .await?;
             let db = st.db.clone();
             let raw_email = req.email.trim().to_string();
+            // No actor: the request comes from someone who cannot sign in. Record the audit row
+            // synchronously before returning so request completion guarantees durable audit state.
+            audit(&db, None, "recovery.request", "user", Some(uid), &raw_email).await;
             tokio::spawn(async move {
-                // No actor: the request comes from someone who cannot sign in.
-                audit(&db, None, "recovery.request", "user", Some(uid), &raw_email).await;
                 notify_perm(
                     &db,
                     Page::AdminRecovery,

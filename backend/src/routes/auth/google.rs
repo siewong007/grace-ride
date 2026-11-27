@@ -13,8 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{
-    create_session, hash_password_async, revoke_other_sessions, verify_totp_or_backup,
-    visitor_lang, SecondFactorOutcome,
+    create_session, hash_password_async, verify_totp_or_backup, visitor_lang, SecondFactorOutcome,
 };
 use crate::auth::{extract_session_token, hash_token, CurrentUser};
 use crate::error::{bad, forbidden, AppResult};
@@ -188,9 +187,18 @@ pub(super) async fn google_start(
     .await?;
 
     let hint_opt = (!email_hint.is_empty()).then_some(email_hint.as_str());
-    let auth_url = st
-        .google_oauth
-        .authorization_url(&state_raw, &verifier, hint_opt)?;
+    let auth_url = if purpose == "password_reset" {
+        st.google_oauth.authorization_url_with_prompt(
+            &state_raw,
+            &verifier,
+            hint_opt,
+            "login",
+            Some(0),
+        )?
+    } else {
+        st.google_oauth
+            .authorization_url(&state_raw, &verifier, hint_opt)?
+    };
     let jar = jar.add(build_ephemeral_cookie(
         st.cfg.secure_cookies(),
         OAUTH_NONCE_COOKIE,
@@ -819,6 +827,7 @@ pub(super) async fn google_unlink(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::stream::revoke_other_sessions(u.id, &u.session_id);
     audit(&st.db, Some(u.id), "google.unlink", "user", Some(u.id), "").await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -1166,6 +1175,7 @@ pub(super) async fn password_reset_complete(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::stream::revoke_user(uid);
     st.limiter
         .reset(&format!("pw_attempt:user:{}", user_email.to_lowercase()));
 

@@ -227,6 +227,79 @@ fn default_vehicle_type() -> String {
 
 /// Keeps `users.spare_seats` within `[1, max(1, seats - 1)]` after switching or editing
 /// the active vehicle so carpool assignment capacity never exceeds physical seats.
+async fn ensure_capacity_for_active_bookings_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lang: crate::util::Lang,
+    driver_id: i64,
+    new_cap: i64,
+    new_carpool_enabled: bool,
+) -> AppResult<()> {
+    let active_rides: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT pickup_at, seats FROM rides
+         WHERE driver_id=$1
+           AND status IN ('pending_passenger','pending_approval','confirmed','in_progress')",
+    )
+    .bind(driver_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let active_visitors: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT COALESCE(
+                    (SELECT MIN(er.pickup_at) FROM rides er WHERE er.event_id = pv.event_id AND er.leg = pv.leg AND er.status <> 'cancelled'),
+                    e.starts_at
+                ) AS slot_at,
+                pv.seats
+         FROM plan_visitors pv
+         JOIN events e ON e.id = pv.event_id
+         WHERE pv.driver_id = $1 AND e.status = 'published'",
+    )
+    .bind(driver_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let all: Vec<(Option<chrono::NaiveDateTime>, String, i64)> = active_rides
+        .into_iter()
+        .chain(active_visitors)
+        .map(|(ts, seats)| (crate::util::parse_dt(&ts), ts, seats))
+        .collect();
+    if all.is_empty() {
+        return Ok(());
+    }
+    if new_cap == 0 {
+        let max_seats = all.iter().map(|(_, _, s)| *s).max().unwrap_or(1);
+        return Err(bad(
+            lang,
+            ErrorKey::NotEnoughDriverSeats {
+                load: max_seats,
+                cap: 0,
+            },
+        ));
+    }
+    for (dt_opt, ts_raw, _) in &all {
+        let mut slot_seats = 0i64;
+        let mut slot_bookings = 0i64;
+        for (other_dt, other_ts, seats) in &all {
+            let same_slot = match (dt_opt, other_dt) {
+                (Some(a), Some(b)) => (*a - *b).num_seconds().abs() < 3600,
+                _ => ts_raw == other_ts,
+            };
+            if same_slot {
+                slot_seats += *seats;
+                slot_bookings += 1;
+            }
+        }
+        if slot_seats > new_cap || (!new_carpool_enabled && slot_bookings > 1) {
+            return Err(bad(
+                lang,
+                ErrorKey::NotEnoughDriverSeats {
+                    load: slot_seats,
+                    cap: new_cap,
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn clamp_spare_seats(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: i64,
@@ -322,6 +395,19 @@ pub(super) async fn put_driver_profile(
         Some(seats) if seats >= 2 => req.spare_seats.min((seats - 1).max(1)),
         _ => req.spare_seats,
     };
+    let resulting_cap = if active_seats.is_some() {
+        super::seat_capacity(effective_spare, active_seats)
+    } else {
+        0
+    };
+    ensure_capacity_for_active_bookings_tx(
+        &mut tx,
+        u.lang,
+        u.id,
+        resulting_cap,
+        req.carpool_enabled,
+    )
+    .await?;
     sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
         .bind(req.carpool_enabled as i64)
         .bind(effective_spare)
@@ -649,10 +735,11 @@ pub(super) async fn update_driver_vehicle(
     }
 
     let mut tx = st.db.begin().await?;
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(u.id)
-        .execute(&mut *tx)
-        .await?;
+    let (carpool_enabled, spare_seats): (i64, i64) =
+        sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=$1 FOR UPDATE")
+            .bind(u.id)
+            .fetch_one(&mut *tx)
+            .await?;
 
     let existing: Option<(i64, i64)> =
         sqlx::query_as("SELECT id, is_active FROM vehicles WHERE id=$1 AND user_id=$2 FOR UPDATE")
@@ -665,6 +752,7 @@ pub(super) async fn update_driver_vehicle(
     };
 
     let mut should_activate = req.is_active.unwrap_or(current_active == 1);
+    let mut next_other_active: Option<(i64, i64)> = None;
     if !should_activate && current_active == 1 {
         let other: Option<(i64, i64)> = sqlx::query_as(
             "SELECT id, seats FROM vehicles WHERE user_id=$1 AND id<>$2 ORDER BY id ASC LIMIT 1",
@@ -673,22 +761,49 @@ pub(super) async fn update_driver_vehicle(
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
-        if let Some((other_id, other_seats)) = other {
-            // Deactivate current vehicle before activating another to satisfy idx_vehicles_user_active.
-            sqlx::query("UPDATE vehicles SET is_active=0 WHERE id=$1 AND user_id=$2")
-                .bind(id)
-                .bind(u.id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1 AND user_id=$2")
-                .bind(other_id)
-                .bind(u.id)
-                .execute(&mut *tx)
-                .await?;
-            clamp_spare_seats(&mut tx, u.id, other_seats).await?;
+        if let Some(other_pair) = other {
+            next_other_active = Some(other_pair);
         } else {
             should_activate = true;
         }
+    }
+    if should_activate {
+        let new_cap =
+            super::seat_capacity(spare_seats.min((req.seats - 1).max(1)), Some(req.seats));
+        ensure_capacity_for_active_bookings_tx(
+            &mut tx,
+            u.lang,
+            u.id,
+            new_cap,
+            carpool_enabled == 1,
+        )
+        .await?;
+    } else if let Some((_, other_seats)) = next_other_active {
+        let new_cap =
+            super::seat_capacity(spare_seats.min((other_seats - 1).max(1)), Some(other_seats));
+        ensure_capacity_for_active_bookings_tx(
+            &mut tx,
+            u.lang,
+            u.id,
+            new_cap,
+            carpool_enabled == 1,
+        )
+        .await?;
+    }
+
+    if let Some((other_id, other_seats)) = next_other_active {
+        // Deactivate current vehicle before activating another to satisfy idx_vehicles_user_active.
+        sqlx::query("UPDATE vehicles SET is_active=0 WHERE id=$1 AND user_id=$2")
+            .bind(id)
+            .bind(u.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1 AND user_id=$2")
+            .bind(other_id)
+            .bind(u.id)
+            .execute(&mut *tx)
+            .await?;
+        clamp_spare_seats(&mut tx, u.id, other_seats).await?;
     } else if should_activate && current_active != 1 {
         sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1 AND id<>$2")
             .bind(u.id)
@@ -772,10 +887,11 @@ pub(super) async fn delete_driver_vehicle(
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
     }
     let mut tx = st.db.begin().await?;
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(u.id)
-        .execute(&mut *tx)
-        .await?;
+    let (carpool_enabled, spare_seats): (i64, i64) =
+        sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=$1 FOR UPDATE")
+            .bind(u.id)
+            .fetch_one(&mut *tx)
+            .await?;
 
     let existing: Option<(i64, String, i64)> = sqlx::query_as(
         "SELECT id, plate, is_active FROM vehicles WHERE id=$1 AND user_id=$2 FOR UPDATE",
@@ -788,26 +904,45 @@ pub(super) async fn delete_driver_vehicle(
         return Err(not_found(u.lang));
     };
 
+    let next_v: Option<(i64, i64)> = if is_active == 1 {
+        let nv: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT id, seats FROM vehicles WHERE user_id=$1 AND id<>$2 ORDER BY id ASC LIMIT 1",
+        )
+        .bind(u.id)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let new_cap = match nv {
+            Some((_, next_seats)) => {
+                super::seat_capacity(spare_seats.min((next_seats - 1).max(1)), Some(next_seats))
+            }
+            None => 0,
+        };
+        ensure_capacity_for_active_bookings_tx(
+            &mut tx,
+            u.lang,
+            u.id,
+            new_cap,
+            carpool_enabled == 1,
+        )
+        .await?;
+        nv
+    } else {
+        None
+    };
+
     sqlx::query("DELETE FROM vehicles WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
 
-    if is_active == 1 {
-        let next_v: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT id, seats FROM vehicles WHERE user_id=$1 ORDER BY id ASC LIMIT 1",
-        )
-        .bind(u.id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some((next_id, next_seats)) = next_v {
-            sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1")
-                .bind(next_id)
-                .execute(&mut *tx)
-                .await?;
-            clamp_spare_seats(&mut tx, u.id, next_seats).await?;
-        }
+    if let Some((next_id, next_seats)) = next_v {
+        sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1")
+            .bind(next_id)
+            .execute(&mut *tx)
+            .await?;
+        clamp_spare_seats(&mut tx, u.id, next_seats).await?;
     }
     tx.commit().await?;
 
@@ -832,17 +967,26 @@ pub(super) async fn select_driver_vehicle(
     if !u.can(Page::Drive, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
     }
-    let existing: Option<(i64, String, String, i64)> =
-        sqlx::query_as("SELECT id, model, plate, seats FROM vehicles WHERE id=$1 AND user_id=$2")
-            .bind(id)
+    let mut tx = st.db.begin().await?;
+    let (carpool_enabled, spare_seats): (i64, i64) =
+        sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=$1 FOR UPDATE")
             .bind(u.id)
-            .fetch_optional(&st.db)
+            .fetch_one(&mut *tx)
             .await?;
+    let existing: Option<(i64, String, String, i64)> = sqlx::query_as(
+        "SELECT id, model, plate, seats FROM vehicles WHERE id=$1 AND user_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(u.id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((_, model, plate, seats)) = existing else {
         return Err(not_found(u.lang));
     };
+    let new_cap = super::seat_capacity(spare_seats.min((seats - 1).max(1)), Some(seats));
+    ensure_capacity_for_active_bookings_tx(&mut tx, u.lang, u.id, new_cap, carpool_enabled == 1)
+        .await?;
 
-    let mut tx = st.db.begin().await?;
     sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1")
         .bind(u.id)
         .execute(&mut *tx)

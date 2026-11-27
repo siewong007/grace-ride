@@ -38,6 +38,7 @@ mkdir -p "$DEST"
 PGPASS_TMP=""
 SAFE_PG_URL=""
 ARCHIVE="$BACKUP_DIR/grace-ride-$STAMP.tar.gz"
+PLAIN_ARCHIVE="$STAGE_DIR/grace-ride-$STAMP.tar.gz"
 SUCCESS=0
 cleanup() {
   rm -rf "$STAGE_DIR"
@@ -46,8 +47,6 @@ cleanup() {
   fi
   if (( SUCCESS == 0 )); then
     rm -f "$ARCHIVE" "${ARCHIVE}.age" "${ARCHIVE}.gpg"
-  elif [[ -n "${BACKUP_AGE_RECIPIENT:-}" || -n "${BACKUP_GPG_RECIPIENT:-}" ]]; then
-    rm -f "$ARCHIVE"
   fi
 }
 trap cleanup EXIT
@@ -97,18 +96,22 @@ else
 fi
 
 tar -C "$DATA_DIR" -czf "$DEST/uploads.tar.gz" uploads
-tar -C "$STAGE_DIR" -czf "$ARCHIVE" "grace-ride-$STAMP"
+tar -C "$STAGE_DIR" -czf "$PLAIN_ARCHIVE" "grace-ride-$STAMP"
 rm -rf "$DEST"
 
 FINAL_ARCHIVE="$ARCHIVE"
 if [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]]; then
-  age -r "$BACKUP_AGE_RECIPIENT" -o "${ARCHIVE}.age" "$ARCHIVE"
-  rm -f "$ARCHIVE"
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$STAGE_DIR/backup.age" "$PLAIN_ARCHIVE"
+  rm -f "$PLAIN_ARCHIVE"
+  mv -f "$STAGE_DIR/backup.age" "${ARCHIVE}.age"
   FINAL_ARCHIVE="${ARCHIVE}.age"
 elif [[ -n "${BACKUP_GPG_RECIPIENT:-}" ]]; then
-  gpg --batch --yes --encrypt -r "$BACKUP_GPG_RECIPIENT" -o "${ARCHIVE}.gpg" "$ARCHIVE"
-  rm -f "$ARCHIVE"
+  gpg --batch --yes --encrypt -r "$BACKUP_GPG_RECIPIENT" -o "$STAGE_DIR/backup.gpg" "$PLAIN_ARCHIVE"
+  rm -f "$PLAIN_ARCHIVE"
+  mv -f "$STAGE_DIR/backup.gpg" "${ARCHIVE}.gpg"
   FINAL_ARCHIVE="${ARCHIVE}.gpg"
+else
+  mv -f "$PLAIN_ARCHIVE" "$ARCHIVE"
 fi
 
 SUCCESS=1

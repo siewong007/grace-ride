@@ -845,6 +845,7 @@ pub async fn security_headers(State(st): State<AppState>, req: Request, next: Ne
     };
     set(h, "x-content-type-options", "nosniff");
     set(h, "x-frame-options", "DENY");
+    set(h, "x-robots-tag", "noindex, nofollow, noarchive");
     if is_capability {
         h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
     } else {

@@ -195,28 +195,23 @@ pub(super) struct OtherLegLoad {
     pub(super) ret: HashMap<i64, (i64, i64)>,
 }
 
-async fn query_other_window_on<'e, E: sqlx::PgExecutor<'e>>(
-    db: E,
+async fn query_other_window_on(
+    db: &mut sqlx::PgConnection,
     event: i64,
     from: &str,
     to: &str,
 ) -> AppResult<HashMap<i64, (i64, i64)>> {
-    let lo = crate::util::parse_dt(from)
-        .map(|d| {
-            (d - chrono::Duration::minutes(65))
-                .format("%Y-%m-%dT%H:%M:%S")
-                .to_string()
-        })
-        .unwrap_or_default();
-    let hi = crate::util::parse_dt(to)
-        .map(|d| {
-            (d + chrono::Duration::minutes(65))
-                .format("%Y-%m-%dT%H:%M:%S")
-                .to_string()
-        })
-        .unwrap_or_else(|| "9999".to_string());
+    let Some((from_dt, to_dt)) = crate::util::parse_dt(from).zip(crate::util::parse_dt(to)) else {
+        return Ok(HashMap::new());
+    };
+    let lo = (from_dt - chrono::Duration::minutes(65))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    let hi = (to_dt + chrono::Duration::minutes(65))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
     let rows: Vec<(i64, i64, i64)> = sqlx::query_as(
-        "SELECT driver_id, COALESCE(SUM(seats),0)::BIGINT, COUNT(*) FROM rides
+        "SELECT driver_id, COALESCE(SUM(seats),0)::BIGINT, COUNT(*)::BIGINT FROM rides
          WHERE driver_id IS NOT NULL AND event_id IS DISTINCT FROM $1 AND status = ANY($2)
            AND pickup_at >= $5 AND pickup_at <= $6
            AND pickup_at::timestamp BETWEEN $3::timestamp - interval '1 hour' AND $4::timestamp + interval '1 hour'
@@ -228,9 +223,39 @@ async fn query_other_window_on<'e, E: sqlx::PgExecutor<'e>>(
     .bind(to)
     .bind(&lo)
     .bind(&hi)
-    .fetch_all(db)
+    .fetch_all(&mut *db)
     .await?;
-    Ok(rows.into_iter().map(|(d, s, n)| (d, (s, n))).collect())
+    let mut map: HashMap<i64, (i64, i64)> = rows.into_iter().map(|(d, s, n)| (d, (s, n))).collect();
+    let vis_rows: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT pv.driver_id, COALESCE(SUM(pv.seats),0)::BIGINT, COUNT(*)::BIGINT
+         FROM plan_visitors pv
+         JOIN events e ON e.id = pv.event_id
+         CROSS JOIN LATERAL (
+             SELECT COALESCE(MIN(er.pickup_at), e.starts_at) AS slot_at
+             FROM rides er
+             WHERE er.event_id = pv.event_id AND er.leg = pv.leg AND er.status <> 'cancelled'
+         ) leg_time
+         WHERE pv.driver_id IS NOT NULL
+           AND pv.event_id IS DISTINCT FROM $1
+           AND e.status = 'published'
+           AND NULLIF(BTRIM(leg_time.slot_at), '') IS NOT NULL
+           AND leg_time.slot_at >= $4 AND leg_time.slot_at <= $5
+           AND leg_time.slot_at::timestamp BETWEEN $2::timestamp - interval '1 hour' AND $3::timestamp + interval '1 hour'
+         GROUP BY pv.driver_id",
+    )
+    .bind(event)
+    .bind(from)
+    .bind(to)
+    .bind(&lo)
+    .bind(&hi)
+    .fetch_all(&mut *db)
+    .await?;
+    for (d, s, n) in vis_rows {
+        let entry = map.entry(d).or_insert((0, 0));
+        entry.0 += s;
+        entry.1 += n;
+    }
+    Ok(map)
 }
 
 pub(super) async fn other_load_on(
@@ -255,7 +280,7 @@ pub(super) async fn other_load_on(
         _ => (starts_at.to_string(), starts_at.to_string()),
     };
     let outbound = query_other_window_on(&mut *conn, event, &out_from, &out_to).await?;
-    let ret = match (
+    let (ret_from, ret_to) = match (
         rides
             .iter()
             .filter(|r| r.leg == "return")
@@ -267,9 +292,10 @@ pub(super) async fn other_load_on(
             .map(|r| r.pickup_at.as_str())
             .max(),
     ) {
-        (Some(a), Some(b)) => query_other_window_on(&mut *conn, event, a, b).await?,
-        _ => HashMap::new(),
+        (Some(a), Some(b)) => (a.to_string(), b.to_string()),
+        _ => (starts_at.to_string(), starts_at.to_string()),
     };
+    let ret = query_other_window_on(&mut *conn, event, &ret_from, &ret_to).await?;
     Ok(OtherLegLoad { outbound, ret })
 }
 

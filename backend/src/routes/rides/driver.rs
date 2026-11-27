@@ -747,18 +747,19 @@ async fn caregiver_ids_for_ride(st: &AppState, r: &RideRow) -> Vec<i64> {
         }
     }
     if r.is_proxy == 1 && !r.rider_name.is_empty() {
-        if let Ok(Some(cg)) = sqlx::query_scalar::<_, i64>(
-            "SELECT cg.id FROM proxy_riders p JOIN users cg ON cg.id = p.caregiver_user_id
-             WHERE p.user_id=$1 AND p.name=$2 AND cg.status = 'active'
-             ORDER BY p.id ASC LIMIT 1",
+        if let Ok(cgs) = sqlx::query_scalar::<_, i64>(
+            "SELECT DISTINCT cg.id FROM proxy_riders p JOIN users cg ON cg.id = p.caregiver_user_id
+             WHERE p.user_id=$1 AND LOWER(BTRIM(p.name)) = LOWER(BTRIM($2)) AND cg.status = 'active'",
         )
         .bind(r.passenger_id)
         .bind(&r.rider_name)
-        .fetch_optional(&st.db)
+        .fetch_all(&st.db)
         .await
         {
-            if cg != r.passenger_id && !ids.contains(&cg) {
-                ids.push(cg);
+            for cg in cgs {
+                if cg != r.passenger_id && !ids.contains(&cg) {
+                    ids.push(cg);
+                }
             }
         }
     }
@@ -966,7 +967,9 @@ pub(super) async fn complete(
                     Some(t) => {
                         sqlx::query_scalar(
                             "SELECT COALESCE(SUM(reimbursement_amount_cents),0)::BIGINT
-                             FROM rides WHERE trip_id=$1 AND id<>$2 AND driver_id=$3 AND status='completed'",
+                             FROM rides
+                             WHERE trip_id=$1 AND id<>$2 AND driver_id=$3
+                               AND status='completed' AND reimbursement_excluded=0",
                         )
                         .bind(t)
                         .bind(id)

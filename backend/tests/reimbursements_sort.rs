@@ -8,7 +8,6 @@ use common::*;
 use grace_ride::state::AppState;
 
 async fn seed_claims(app: &Router, st: &AppState, root: &str) {
-    let receipt = upload_png(app, root).await;
     let member: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
         .fetch_one(&st.db)
         .await
@@ -19,6 +18,7 @@ async fn seed_claims(app: &Router, st: &AppState, root: &str) {
         (3000, "Needle high", "approved", "2026-01-02T10:00:00"),
         (2000, "Other", "pending", "2026-01-03T10:00:00"),
     ] {
+        let receipt = upload_png(app, root).await;
         sqlx::query(
             "INSERT INTO reimbursements
              (user_id, amount_cents, description, receipt_file_id, payee_name, status, created_at, updated_at)

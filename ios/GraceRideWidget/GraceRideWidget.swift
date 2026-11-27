@@ -40,7 +40,7 @@ struct GraceRideProvider: TimelineProvider {
 
     private func loadEntry(now: Date) -> GraceRideEntry {
         let defaults = UserDefaults(suiteName: WidgetSnapshotStore.appGroupSuiteName)
-        let raw = WidgetSnapshotStore.load(userDefaults: defaults)
+        let raw = WidgetSnapshotStore.load(from: KeychainSecureStore(), userDefaults: defaults)
         let fresh = WidgetSnapshotStore.freshForDisplay(raw, now: now)
         return GraceRideEntry(date: now, summary: fresh, lang: resolvedLang())
     }

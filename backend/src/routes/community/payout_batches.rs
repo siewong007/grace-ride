@@ -105,12 +105,14 @@ pub(super) async fn create_payout_batch(
         if unique_ids.is_empty() {
             return Err(bad(u.lang, ErrorKey::BatchEmpty));
         }
-        let rows: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT id, amount_cents FROM reimbursements
-             WHERE id = ANY($1) AND status = 'approved' AND batch_id IS NULL
-               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
-             ORDER BY id
-             FOR UPDATE",
+        let rows: Vec<(i64, i64, String, Option<i64>)> = sqlx::query_as(
+            "SELECT r.id, r.amount_cents, r.kind, COALESCE(r.event_id, rd.event_id) AS linked_event_id
+             FROM reimbursements r
+             LEFT JOIN rides rd ON rd.id = r.ride_id
+             WHERE r.id = ANY($1) AND r.status = 'approved' AND r.batch_id IS NULL
+               AND r.user_id <> $2 AND r.reviewed_by IS DISTINCT FROM $2 AND r.requested_by IS DISTINCT FROM $2
+             ORDER BY r.id
+             FOR UPDATE OF r",
         )
         .bind(&unique_ids)
         .bind(u.id)
@@ -119,15 +121,39 @@ pub(super) async fn create_payout_batch(
         if rows.len() != unique_ids.len() {
             return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
         }
-        rows
+        let cancelled_event_ids: Vec<i64> = rows
+            .iter()
+            .filter_map(|(_, _, k, eid)| {
+                matches!(k.as_str(), "mileage" | "visitor_special")
+                    .then_some(*eid)
+                    .flatten()
+            })
+            .collect();
+        if !cancelled_event_ids.is_empty() {
+            let has_cancelled: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM events WHERE id = ANY($1) AND status = 'cancelled')",
+            )
+            .bind(&cancelled_event_ids)
+            .fetch_one(&mut *tx)
+            .await?;
+            if has_cancelled {
+                return Err(bad(u.lang, ErrorKey::EventNotOpen));
+            }
+        }
+        rows.into_iter()
+            .map(|(cid, amt, _, _)| (cid, amt))
+            .collect()
     } else {
         sqlx::query_as(
-            "SELECT id, amount_cents FROM reimbursements
-             WHERE status = 'approved' AND batch_id IS NULL
-               AND created_at < ($1 || '-99')
-               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
-             ORDER BY id
-             FOR UPDATE",
+            "SELECT r.id, r.amount_cents FROM reimbursements r
+             LEFT JOIN rides rd ON rd.id = r.ride_id
+             LEFT JOIN events ev ON ev.id = COALESCE(r.event_id, rd.event_id)
+             WHERE r.status = 'approved' AND r.batch_id IS NULL
+               AND r.created_at < ($1 || '-99')
+               AND r.user_id <> $2 AND r.reviewed_by IS DISTINCT FROM $2 AND r.requested_by IS DISTINCT FROM $2
+               AND NOT (r.kind IN ('mileage', 'visitor_special') AND COALESCE(ev.status, '') = 'cancelled')
+             ORDER BY r.id
+             FOR UPDATE OF r",
         )
         .bind(&month)
         .bind(u.id)
@@ -360,6 +386,22 @@ pub(super) async fn pay_payout_batch(
         if reviewed_by == Some(u.id) {
             return Err(forbidden(u.lang, ErrorKey::CannotPayOwnApproval));
         }
+    }
+    let has_cancelled_claim: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM reimbursements r
+             LEFT JOIN rides rd ON rd.id = r.ride_id
+             JOIN events ev ON ev.id = COALESCE(r.event_id, rd.event_id)
+             WHERE r.batch_id = $1
+               AND r.kind IN ('mileage', 'visitor_special')
+               AND ev.status = 'cancelled'
+         )",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if has_cancelled_claim {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
 
     let ts_now = now();

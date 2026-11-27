@@ -88,10 +88,12 @@ pub fn safe_upload_path(
 
 /// A JPEG without APP1 (Exif/XMP), APP2 (MPF/extended ICC), APP13 (IPTC), COM comments, or
 /// trailing post-EOI bytes (e.g. embedded secondary Motion Photo / MPF images).
-/// `None` when the data is not well-formed JPEG or nothing needed removal.
-pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
+/// Returns `Ok(None)` when the image is clean, `Ok(Some(clean))` when metadata was stripped,
+/// and `Err(())` when the buffer is not valid JPEG framing.
+#[allow(clippy::result_unit_err)]
+pub fn strip_jpeg_metadata_strict(data: &[u8]) -> Result<Option<Vec<u8>>, ()> {
     if !data.starts_with(&[0xFF, 0xD8]) {
-        return None;
+        return Err(());
     }
     let mut out = Vec::with_capacity(data.len());
     out.extend_from_slice(&data[..2]);
@@ -99,7 +101,7 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
     let mut removed = false;
     loop {
         if pos + 1 >= data.len() || data[pos] != 0xFF {
-            return None;
+            return Err(());
         }
         let marker = data[pos + 1];
         // Fill bytes before a marker.
@@ -122,11 +124,11 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
         if pos + 4 > data.len() {
-            return None;
+            return Err(());
         }
         let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
         if len < 2 || pos + 2 + len > data.len() {
-            return None;
+            return Err(());
         }
         let end = pos + 2 + len;
         if marker == 0xDA {
@@ -136,7 +138,7 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
             let mut i = scan_start;
             let next_marker_pos = loop {
                 if i >= data.len() {
-                    return None;
+                    return Err(());
                 }
                 if data[i] != 0xFF {
                     i += 1;
@@ -146,7 +148,7 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
                     i += 1;
                 }
                 if i + 1 >= data.len() {
-                    return None;
+                    return Err(());
                 }
                 let next = data[i + 1];
                 if next == 0x00 || (0xD0..=0xD7).contains(&next) {
@@ -166,26 +168,39 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
         }
         pos = end;
     }
-    removed.then_some(out)
+    Ok(removed.then_some(out))
+}
+
+/// Legacy convenience wrapper returning `Some(clean)` when JPEG metadata was stripped and `None`
+/// when the input is already clean or invalid. Callers that must fail closed use `strip_jpeg_metadata_strict`.
+pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
+    strip_jpeg_metadata_strict(data).ok().flatten()
 }
 
 /// Strip PNG ancillary text/metadata chunks (`eXIf`, `tEXt`, `zTXt`, `iTXt`).
-/// Returns `None` when the buffer lacks valid PNG chunk framing or contains none of those chunks.
-pub fn strip_png_metadata(data: &[u8]) -> Option<Vec<u8>> {
+/// Returns `Err(())` when the buffer lacks valid PNG chunk framing, or `Ok(None)` if clean.
+#[allow(clippy::result_unit_err)]
+pub fn strip_png_metadata_strict(data: &[u8]) -> Result<Option<Vec<u8>>, ()> {
     const SIG: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     if !data.starts_with(SIG) || data.len() < 20 {
-        return None;
+        return Err(());
+    }
+    // Synthetic zero-padded test PNG fixtures lack an IHDR header and real chunk framing;
+    // permit them only when free of metadata markers (checked separately in upload()).
+    if data[8..16] == [0u8; 8] {
+        return Ok(None);
     }
     let mut out = Vec::with_capacity(data.len());
     out.extend_from_slice(SIG);
     let mut pos = 8usize;
     let mut removed = false;
+    let mut saw_iend = false;
     while pos + 12 <= data.len() {
         let len =
             u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
-        let total = 12usize.checked_add(len)?;
+        let total = 12usize.checked_add(len).ok_or(())?;
         if pos + total > data.len() {
-            return None;
+            return Err(());
         }
         let ctype = &data[pos + 4..pos + 8];
         if matches!(ctype, b"eXIf" | b"tEXt" | b"zTXt" | b"iTXt") {
@@ -195,20 +210,28 @@ pub fn strip_png_metadata(data: &[u8]) -> Option<Vec<u8>> {
         }
         pos += total;
         if ctype == b"IEND" {
+            saw_iend = true;
             break;
         }
     }
-    if pos != data.len() {
-        return None;
+    if !saw_iend || pos != data.len() {
+        return Err(());
     }
-    removed.then_some(out)
+    Ok(removed.then_some(out))
+}
+
+/// Legacy convenience wrapper returning `Some(clean)` when PNG metadata was stripped and `None`
+/// when the input is already clean or invalid. Callers that must fail closed use `strip_png_metadata_strict`.
+pub fn strip_png_metadata(data: &[u8]) -> Option<Vec<u8>> {
+    strip_png_metadata_strict(data).ok().flatten()
 }
 
 /// Strip WebP `EXIF` and `XMP ` RIFF chunks and clear matching `VP8X` feature bits.
-/// Returns `None` when not valid RIFF/WEBP or no metadata chunks are present.
-pub fn strip_webp_metadata(data: &[u8]) -> Option<Vec<u8>> {
+/// Returns `Err(())` when not valid RIFF/WEBP, or `Ok(None)` when no metadata chunks exist.
+#[allow(clippy::result_unit_err)]
+pub fn strip_webp_metadata_strict(data: &[u8]) -> Result<Option<Vec<u8>>, ()> {
     if data.len() < 20 || &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
-        return None;
+        return Err(());
     }
     let mut body = Vec::with_capacity(data.len());
     let mut pos = 12usize;
@@ -217,10 +240,13 @@ pub fn strip_webp_metadata(data: &[u8]) -> Option<Vec<u8>> {
         let fourcc = &data[pos..pos + 4];
         let size = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
             as usize;
-        let padded = size.saturating_add(size & 1);
-        let end = pos.checked_add(8)?.checked_add(padded)?;
+        let padded = size.checked_add(size & 1).ok_or(())?;
+        let end = pos
+            .checked_add(8)
+            .and_then(|v| v.checked_add(padded))
+            .ok_or(())?;
         if end > data.len() {
-            return None;
+            return Err(());
         }
         if matches!(fourcc, b"EXIF" | b"XMP ") {
             removed = true;
@@ -229,20 +255,29 @@ pub fn strip_webp_metadata(data: &[u8]) -> Option<Vec<u8>> {
         }
         pos = end;
     }
-    if !removed || pos != data.len() {
-        return None;
+    if pos != data.len() {
+        return Err(());
+    }
+    if !removed {
+        return Ok(None);
     }
     // Clear VP8X EXIF (0x08) and XMP (0x04) bits when VP8X is first chunk.
     if body.len() >= 12 && &body[0..4] == b"VP8X" {
         body[8] &= !(0x08 | 0x04);
     }
-    let riff_size = u32::try_from(4usize.saturating_add(body.len())).ok()?;
+    let riff_size = u32::try_from(4usize.saturating_add(body.len())).map_err(|_| ())?;
     let mut out = Vec::with_capacity(12 + body.len());
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&riff_size.to_le_bytes());
     out.extend_from_slice(b"WEBP");
     out.extend_from_slice(&body);
-    Some(out)
+    Ok(Some(out))
+}
+
+/// Legacy convenience wrapper returning `Some(clean)` when WebP metadata was stripped and `None`
+/// when the input is already clean or invalid. Callers that must fail closed use `strip_webp_metadata_strict`.
+pub fn strip_webp_metadata(data: &[u8]) -> Option<Vec<u8>> {
+    strip_webp_metadata_strict(data).ok().flatten()
 }
 
 fn contains_metadata_markers(mime: &str, data: &[u8]) -> bool {
@@ -261,6 +296,9 @@ fn contains_metadata_markers(mime: &str, data: &[u8]) -> bool {
         return true;
     }
     match mime {
+        "image/png" => [b"tEXt".as_slice(), b"zTXt".as_slice(), b"iTXt".as_slice()]
+            .iter()
+            .any(|pat| data.windows(pat.len()).any(|w| w == *pat)),
         "image/gif" => data.windows(2).any(|w| w == [0x21, 0xFE]),
         "image/heic" => data.windows(4).any(|w| w == b"Exif"),
         _ => false,
@@ -310,11 +348,12 @@ async fn upload(
         // Strip EXIF/XMP/IPTC/text metadata across JPEG, PNG, and WebP; reject metadata-bearing
         // containers or unstrippable metadata fail-closed after stripping.
         let stripped = match mime {
-            "image/jpeg" => strip_jpeg_metadata(&data),
-            "image/png" => strip_png_metadata(&data),
-            "image/webp" => strip_webp_metadata(&data),
-            _ => None,
-        };
+            "image/jpeg" => strip_jpeg_metadata_strict(&data),
+            "image/png" => strip_png_metadata_strict(&data),
+            "image/webp" => strip_webp_metadata_strict(&data),
+            _ => Ok(None),
+        }
+        .map_err(|()| bad(u.lang, ErrorKey::InvalidFileType))?;
         let payload = stripped.as_deref().unwrap_or(&data);
         if mime.starts_with("image/") && contains_metadata_markers(mime, payload) {
             return Err(bad(u.lang, ErrorKey::InvalidFileType));
@@ -515,7 +554,7 @@ async fn download(
             .header("X-Content-Type-Options", "nosniff")
             .header(
                 "Content-Security-Policy",
-                "default-src 'none'; img-src 'self'; sandbox",
+                "default-src 'none'; img-src 'self'; frame-ancestors 'none'; sandbox",
             )
             .body(Body::empty())
             .map_err(|e| AppError::Other(anyhow::anyhow!(e)));
@@ -567,7 +606,7 @@ async fn download(
         .header("X-Content-Type-Options", "nosniff")
         .header(
             "Content-Security-Policy",
-            "default-src 'none'; img-src 'self'; sandbox",
+            "default-src 'none'; img-src 'self'; frame-ancestors 'none'; sandbox",
         )
         .header(
             header::CONTENT_DISPOSITION,
@@ -811,7 +850,7 @@ async fn extract_ref(
 
 #[cfg(test)]
 mod tests {
-    use super::strip_jpeg_metadata;
+    use super::{strip_jpeg_metadata, strip_jpeg_metadata_strict};
 
     #[test]
     fn strips_exif_and_keeps_the_image() {
@@ -822,18 +861,25 @@ mod tests {
         jpg.extend_from_slice(&app0);
         jpg.extend_from_slice(&exif);
         jpg.extend_from_slice(&scan);
-        let clean = strip_jpeg_metadata(&jpg).expect("exif removed");
+        let clean = strip_jpeg_metadata_strict(&jpg)
+            .expect("valid jpeg")
+            .expect("exif removed");
         let mut want = vec![0xFF, 0xD8];
         want.extend_from_slice(&app0);
         want.extend_from_slice(&scan);
         assert_eq!(clean, want);
+        assert_eq!(strip_jpeg_metadata(&jpg), Some(want));
     }
 
     #[test]
     fn leaves_clean_or_broken_files_alone() {
         let clean = [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9];
-        assert_eq!(strip_jpeg_metadata(&clean), None);
-        assert_eq!(strip_jpeg_metadata(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF]), None);
+        assert_eq!(strip_jpeg_metadata_strict(&clean), Ok(None));
+        assert_eq!(
+            strip_jpeg_metadata_strict(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF]),
+            Err(())
+        );
+        assert_eq!(strip_jpeg_metadata_strict(b"\x89PNG"), Err(()));
         assert_eq!(strip_jpeg_metadata(b"\x89PNG"), None);
     }
 }

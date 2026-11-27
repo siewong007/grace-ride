@@ -1306,7 +1306,7 @@ async fn deep_audit_hardening_atomic_totp_lifecycle_and_password_cap() {
     assert_eq!(replay_try.json["code"], "CODE_ALREADY_USED");
 
     let attempts_after_replay: i64 = sqlx::query_scalar(
-        "SELECT COALESCE((state::jsonb->>'attempts')::int, -1) FROM auth_challenges WHERE user_id = $1 AND kind = 'google_totp'",
+        "SELECT COALESCE((state::jsonb->>'attempts')::bigint, -1) FROM auth_challenges WHERE user_id = $1 AND kind = 'google_totp'",
     )
     .bind(uid)
     .fetch_one(&st.db)
@@ -1560,7 +1560,9 @@ async fn deep_audit_hardening_atomic_totp_lifecycle_and_password_cap() {
         &app,
         Method::POST,
         "/api/auth/logout-all",
-        Some(&sess2),
+        Some(&format!(
+            "{sess2}; gr_oauth_nonce=n1; gr_pw_reset=p1; gr_google_totp=t1"
+        )),
         None,
     )
     .await;

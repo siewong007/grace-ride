@@ -92,6 +92,7 @@ internal fun MemberEditSheet(
     onCopiedEmail: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val context = LocalContext.current
     val view = LocalView.current
     val canDismiss by rememberUpdatedState(!busy)
@@ -455,6 +456,7 @@ internal fun BatchApproveMembersSheet(
     onConfirm: (roleKey: String, groupIds: List<Long>?, groupsTouched: Boolean, presidentAcknowledged: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val view = LocalView.current
     val canDismiss by rememberUpdatedState(!busy)
     val sheetState = rememberModalBottomSheetState(

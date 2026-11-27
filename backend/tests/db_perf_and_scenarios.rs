@@ -43,11 +43,20 @@ fn plan_has_seq_scan(node: &Value) -> bool {
 }
 
 async fn explain_plan(db: &sqlx::PgPool, query: String) -> Value {
+    let mut tx = db.begin().await.expect("begin explain tx");
+    // Match production/dev Docker Postgres NVMe SSD planner cost settings (`docker-compose*.yml`)
+    // so local tests evaluate the same natural index vs seq-scan choices.
+    sqlx::query("SET LOCAL random_page_cost = 1.1")
+        .execute(&mut *tx)
+        .await
+        .expect("set random_page_cost");
     let rows: Vec<(Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(query))
-        .fetch_all(db)
+        .fetch_all(&mut *tx)
         .await
         .expect("explain query");
-    rows[0].0[0]["Plan"].clone()
+    let plan = rows[0].0[0]["Plan"].clone();
+    tx.rollback().await.expect("rollback explain tx");
+    plan
 }
 
 #[tokio::test]

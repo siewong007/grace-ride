@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{
-    check_receipts, compute_shares, ensure_all_attended_on, ensure_users_exist_on, event_owner,
+    check_receipts_on, compute_shares, ensure_all_attended_on, ensure_users_exist_on, event_owner,
     load, load_on, paid_amount, snapshot, snapshot_on, write_body, SettlementIn,
 };
 use crate::auth::CurrentUser;
@@ -32,17 +32,18 @@ pub(super) async fn create(
             ErrorKey::OnlyOrganiserCanInitiateCostSplit,
         ));
     }
-    let event_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
-        .bind(event_id)
-        .fetch_one(&st.db)
-        .await?;
-    if event_status == "draft" {
-        return Err(bad(u.lang, ErrorKey::EventNotOpen));
-    }
     let shares = compute_shares(u.lang, &req)?;
-    check_receipts(&st, &u, &req).await?;
     let share_uids: Vec<i64> = shares.iter().map(|s| s.0).collect();
     let mut tx = st.db.begin().await?;
+    let event_status: String =
+        sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+            .bind(event_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if matches!(event_status.as_str(), "draft" | "cancelled") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    check_receipts_on(&mut tx, &u, &req).await?;
     ensure_users_exist_on(&mut tx, u.lang, &share_uids).await?;
     let (sid,): (i64,) = sqlx::query_as(
         "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES ($1,$2,$3,$4) RETURNING id",
@@ -211,7 +212,6 @@ pub(super) async fn update(
         return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
     }
     let shares = compute_shares(u.lang, &req)?;
-    check_receipts(&st, &u, &req).await?;
     let share_uids: Vec<i64> = shares.iter().map(|s| s.0).collect();
     if s.status == "published" {
         if req.payee_account.trim().is_empty() {
@@ -226,6 +226,14 @@ pub(super) async fn update(
         // One transaction for the saved old version, the version bump and the new body,
         // with the bill row locked so two revisions at once can't share a version number.
         let mut tx = st.db.begin().await?;
+        let ev_status: String =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(s.event_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if matches!(ev_status.as_str(), "draft" | "cancelled") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
         sqlx::query("SELECT id FROM settlements WHERE id=$1 FOR UPDATE")
             .bind(id)
             .execute(&mut *tx)
@@ -235,6 +243,7 @@ pub(super) async fn update(
         if s.status != "published" {
             return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
         }
+        check_receipts_on(&mut tx, &u, &req).await?;
         ensure_users_exist_on(&mut tx, u.lang, &share_uids).await?;
         // A revision must obey the same attendance rule as publishing: never charge
         // someone who was not recorded as attending the event.
@@ -364,6 +373,14 @@ pub(super) async fn update(
         // Hold the bill and look again: a publish that got in first means these changes
         // would land on a published bill with no revision kept and no attendance check.
         let mut tx = st.db.begin().await?;
+        let ev_status: String =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(s.event_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if matches!(ev_status.as_str(), "draft" | "cancelled") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
         let (status,): (String,) =
             sqlx::query_as("SELECT status FROM settlements WHERE id=$1 FOR UPDATE")
                 .bind(id)
@@ -372,6 +389,7 @@ pub(super) async fn update(
         if status != "draft" {
             return Err(conflict(u.lang, ErrorKey::SettlementAlreadyPublished));
         }
+        check_receipts_on(&mut tx, &u, &req).await?;
         ensure_users_exist_on(&mut tx, u.lang, &share_uids).await?;
         write_body(&mut tx, id, &req, &shares).await?;
         tx.commit().await?;
@@ -431,6 +449,13 @@ pub(super) async fn publish(
         .execute(&mut *tx)
         .await?;
     let s = load_on(&mut *tx, u.lang, id).await?;
+    let ev_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+        .bind(s.event_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if matches!(ev_status.as_str(), "draft" | "cancelled") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPublish));
     }

@@ -7,8 +7,52 @@ use tracing_subscriber::{
     filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
+fn redact_capability_substrings(input: &str) -> String {
+    const PREFIXES: &[&str] = &[
+        "/api/invites/",
+        "/api/visit/",
+        "/api/care/",
+        "/api/calendar/",
+        "/api/push/telegram/webhook/",
+        "/invite/",
+        "/visit/",
+        "/care/",
+    ];
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if let Some(prefix) = PREFIXES
+            .iter()
+            .copied()
+            .find(|p| input[i..].starts_with(p) && input.len() > i + p.len())
+        {
+            out.push_str(prefix);
+            let mut j = i + prefix.len();
+            while j < input.len() {
+                let ch = input[j..].chars().next().unwrap_or(' ');
+                if ch.is_whitespace()
+                    || matches!(ch, '?' | '#' | '&' | '"' | '\'' | '>' | ')' | ']' | ',')
+                {
+                    break;
+                }
+                j += ch.len_utf8();
+            }
+            if j > i + prefix.len() {
+                out.push_str("[REDACTED]");
+                i = j;
+                continue;
+            }
+        }
+        let ch = input[i..].chars().next().unwrap_or(' ');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 fn scrub_sentry_text(raw: &str) -> String {
     let mut out = grace_ride::redact_uri_path(raw).into_owned();
+    out = redact_capability_substrings(&out);
     let mut redacted_emails = Vec::new();
     for tok in out.split_whitespace() {
         let trimmed =
@@ -227,4 +271,28 @@ async fn shutdown(shutdown_tx: tokio::sync::watch::Sender<bool>) {
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
     tracing::info!("shutdown signal received");
     let _ = shutdown_tx.send(true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scrub_sentry_text;
+
+    #[test]
+    fn scrub_sentry_text_redacts_capability_urls_emails_and_phones() {
+        let input = "failed POST /invite/secret-inv-123 for alice@example.com on https://app.test/api/care/caretok99?next=1 and +60123456789 with /api/push/telegram/webhook/botsec-xyz";
+        let cleaned = scrub_sentry_text(input);
+        assert!(!cleaned.contains("secret-inv-123"), "{cleaned}");
+        assert!(!cleaned.contains("caretok99"), "{cleaned}");
+        assert!(!cleaned.contains("botsec-xyz"), "{cleaned}");
+        assert!(!cleaned.contains("alice@example.com"), "{cleaned}");
+        assert!(!cleaned.contains("60123456789"), "{cleaned}");
+        assert!(cleaned.contains("/invite/[REDACTED]"), "{cleaned}");
+        assert!(cleaned.contains("/api/care/[REDACTED]?next=1"), "{cleaned}");
+        assert!(
+            cleaned.contains("/api/push/telegram/webhook/[REDACTED]"),
+            "{cleaned}"
+        );
+        assert!(cleaned.contains("[email]"), "{cleaned}");
+        assert!(cleaned.contains("[phone]"), "{cleaned}");
+    }
 }

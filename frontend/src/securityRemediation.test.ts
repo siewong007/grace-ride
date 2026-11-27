@@ -1,9 +1,15 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import React from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateIcs } from './calendar';
 import type { Ride } from './components/RideCard';
 import { safeInternalPath } from './guideLinks';
 import {
+  clearClientSessionStorage,
   clearOfflineSnapshots,
+  clearPendingLogout,
   loadTodayRidesSnapshot,
   saveTodayRidesSnapshot,
 } from './offlineSnapshot';
@@ -304,5 +310,225 @@ describe('BugHunter security remediation (frontend)', () => {
     saveTodayRidesSnapshot(7, [activeRide]);
     expect(loadTodayRidesSnapshot(7)?.rides).toHaveLength(1);
     clearOfflineSnapshots();
+  });
+});
+
+describe('Pass 2 frontend security hardening', () => {
+  afterEach(() => {
+    vi.doUnmock('./auth');
+    vi.doUnmock('./api');
+    vi.doUnmock('./webauthn');
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it('loadTodayRidesSnapshot fails closed when locked, and clearPendingLogout + clearClientSessionStorage purge transient keys', () => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T09:00:00`;
+    const activeRide: Ride = {
+      id: 99,
+      status: 'confirmed',
+      pickup_at: todayIso,
+      area: { id: 1, name: 'SS2' },
+      pickup_address: '10 Jalan SS2',
+      destination: 'PJ State CMC',
+      seats: 1,
+      assistance: '',
+      notes: '',
+      event: null,
+      trip_id: null,
+      passenger: { id: 7, name: 'Member', phone: null },
+      driver: { id: 8, name: 'Driver', phone: null, vehicle: null },
+      needs_attention: false,
+      attention_reason: '',
+      started_at: null,
+      picked_up_at: null,
+      completed_at: null,
+      updated_at: todayIso,
+      viewer: { is_passenger: true, is_driver: false, is_staff: false },
+    };
+
+    saveTodayRidesSnapshot(7, [activeRide]);
+    expect(loadTodayRidesSnapshot(7)?.rides).toHaveLength(1);
+
+    localStorage.setItem('gr_locked_user', '7');
+    expect(loadTodayRidesSnapshot(7)).toBeNull();
+
+    localStorage.setItem('gr_pending_logout', '1');
+    clearPendingLogout();
+    expect(localStorage.getItem('gr_pending_logout')).toBeNull();
+
+    sessionStorage.setItem('gr_notif_prompt_dismissed', '1');
+    clearClientSessionStorage();
+    expect(sessionStorage.getItem('gr_notif_prompt_dismissed')).toBeNull();
+  });
+
+  it('AutoLockProvider locks synchronously when me.locked is true without rendering children', async () => {
+    vi.resetModules();
+    vi.doMock('./auth', () => ({
+      useAuth: () => ({
+        me: {
+          id: 1,
+          name: 'Grace Member',
+          email: 'grace@example.com',
+          phone: '0123456789',
+          photo_file_id: null,
+          roles: ['member'],
+          groups: [{ id: 10, name: 'Youth' }],
+          badges_opt_out: false,
+          status: 'active',
+          terms_accepted: true,
+          privileged: false,
+          mfa_ok: true,
+          locked: true,
+          unread: 0,
+          passkey_count: 1,
+          auto_lock_mins: 15,
+          session_timeout_mins: 15,
+        },
+        can: () => true,
+        refresh: vi.fn(),
+        clearLocalAuth: vi.fn(),
+      }),
+    }));
+    vi.doMock('./webauthn', () => ({
+      passkeySupported: () => true,
+      reauthWithPasskey: vi.fn(),
+    }));
+    vi.doMock('./api', () => ({
+      post: vi.fn().mockResolvedValue({ ok: true }),
+    }));
+
+    const { AutoLockProvider } = await import('./components/AutoLock');
+    let childRenderCount = 0;
+    function SpyChild() {
+      childRenderCount += 1;
+      return React.createElement('div', { 'data-testid': 'secret-child' }, 'Secret');
+    }
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        null,
+        React.createElement(
+          AutoLockProvider,
+          null,
+          React.createElement(SpyChild, null),
+        ),
+      ),
+    );
+
+    expect(childRenderCount).toBe(0);
+    expect(screen.queryByTestId('secret-child')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('EventCheckin transfers cross-event codes in navigation state rather than query params', async () => {
+    vi.resetModules();
+    const postSpy = vi.fn().mockResolvedValue({ ok: true, already_attended: false });
+    vi.doMock('./auth', () => ({
+      useAuth: () => ({
+        me: {
+          id: 1,
+          name: 'Test Member',
+          roles: ['member'],
+          status: 'active',
+          perms: { has: () => true },
+        },
+        can: () => true,
+        loading: false,
+      }),
+    }));
+    vi.doMock('./api', async () => {
+      const actual = await vi.importActual('./api');
+      return {
+        ...actual,
+        post: postSpy,
+        useApi: (path: string | null) => ({
+          data: path
+            ? {
+                id: Number(path.split('/')[2] || 10),
+                title: 'Event Checkin',
+                starts_at: '2026-11-20T19:30:00',
+                location: 'Main Hall',
+                attendance_enabled: true,
+                my_attended: false,
+                is_member: true,
+              }
+            : null,
+          error: null,
+          reload: vi.fn(),
+        }),
+      };
+    });
+
+    const replaceSpy = vi.spyOn(window.history, 'replaceState');
+    const origLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: {
+        ...origLocation,
+        pathname: '/events/10/checkin',
+        search: '?code=INITIAL99',
+      },
+    });
+
+    try {
+      const { default: EventCheckin } = await import('./pages/EventCheckin');
+      function LocationProbe() {
+        const loc = useLocation();
+        return React.createElement('div', {
+          'data-testid': 'loc-probe',
+          'data-search': loc.search,
+          'data-pathname': loc.pathname,
+        });
+      }
+
+      const user = userEvent.setup();
+      render(
+        React.createElement(
+          MemoryRouter,
+          { initialEntries: ['/events/10/checkin?code=INITIAL99'] },
+          React.createElement(
+            Routes,
+            null,
+            React.createElement(Route, {
+              path: '/events/:id/checkin',
+              element: React.createElement(
+                React.Fragment,
+                null,
+                React.createElement(LocationProbe, null),
+                React.createElement(EventCheckin, null),
+              ),
+            }),
+          ),
+        ),
+      );
+
+      await waitFor(() => expect(replaceSpy).toHaveBeenCalled());
+      expect(postSpy).toHaveBeenCalledWith('/events/10/checkin', { code: 'INITIAL99' });
+
+      const manualBtn = screen.queryByRole('textbox');
+      if (manualBtn) {
+        await user.clear(manualBtn);
+        await user.type(manualBtn, 'https://graceride.app/events/20/checkin?code=CROSS20');
+        await user.keyboard('{Enter}');
+        await waitFor(() => {
+          expect(postSpy).toHaveBeenCalledWith('/events/20/checkin', { code: 'CROSS20' });
+        });
+        const probe = screen.getByTestId('loc-probe');
+        expect(probe.getAttribute('data-pathname')).toBe('/events/20/checkin');
+        expect(probe.getAttribute('data-search')).toBe('');
+      }
+    } finally {
+      replaceSpy.mockRestore();
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: origLocation,
+      });
+    }
   });
 });

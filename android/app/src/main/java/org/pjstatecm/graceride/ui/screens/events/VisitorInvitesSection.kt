@@ -76,6 +76,7 @@ fun VisitorInvitesSection(
     onDismissSharePair: () -> Unit,
     onCopiedToast: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val context = LocalContext.current
     var createOpen by remember { mutableStateOf(false) }
     var pendingRevoke by remember { mutableStateOf<VisitorPassDto?>(null) }

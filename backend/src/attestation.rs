@@ -552,7 +552,7 @@ pub async fn refresh_google_attestation_revocation_list(
     if !resp.status().is_success() {
         anyhow::bail!("attestation CRL fetch returned HTTP {}", resp.status());
     }
-    let body = resp.bytes().await?;
+    let body = crate::util::read_response_bytes_bounded(resp, 2 * 1024 * 1024).await?;
     let val: serde_json::Value = serde_json::from_slice(&body)?;
     let entries = val
         .get("entries")

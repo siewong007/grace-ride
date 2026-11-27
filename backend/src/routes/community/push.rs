@@ -707,7 +707,10 @@ pub(super) async fn telegram_test(
                 .await;
                 Ok(Json(json!({ "ok": true, "delivered": true })))
             } else {
-                let txt = res.text().await.unwrap_or_default();
+                let txt_bytes = crate::util::read_response_bytes_bounded(res, 64 * 1024)
+                    .await
+                    .unwrap_or_default();
+                let txt = String::from_utf8_lossy(&txt_bytes);
                 if status == 403 || txt.contains("chat not found") || txt.contains("blocked") {
                     let _ = sqlx::query(
                         "INSERT INTO user_notification_prefs (user_id, telegram_blocked, updated_at)

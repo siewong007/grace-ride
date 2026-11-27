@@ -198,6 +198,7 @@ pub(super) async fn lock_session(
             .bind(&u.session_id)
             .execute(&st.db)
             .await?;
+        crate::stream::revoke_session(&u.session_id);
         audit(
             &st.db,
             Some(u.id),
@@ -217,6 +218,7 @@ pub(super) async fn lock_session(
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
+    crate::stream::revoke_session(&u.session_id);
     audit(&st.db, Some(u.id), "session.lock", "user", Some(u.id), "").await;
     Ok((jar, Json(json!({ "ok": true }))))
 }
@@ -530,6 +532,7 @@ pub(super) async fn set_password(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::stream::revoke_other_sessions(u.id, &u.session_id);
     st.limiter
         .reset(&format!("pw_attempt:user:{}", u.email.to_lowercase()));
     audit(&st.db, Some(u.id), "password.set", "user", Some(u.id), "").await;

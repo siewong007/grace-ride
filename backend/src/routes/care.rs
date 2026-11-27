@@ -79,15 +79,19 @@ async fn can_manage_care_link(st: &AppState, u: &CurrentUser, r: &RideRow) -> Ap
         return Ok(true);
     }
     if r.is_proxy == 1 && !r.rider_name.is_empty() {
-        let proxy_cg: Option<i64> = sqlx::query_scalar(
-            "SELECT caregiver_user_id FROM proxy_riders WHERE user_id=$1 AND name=$2",
+        let is_caregiver: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM proxy_riders
+                 WHERE user_id=$1 AND caregiver_user_id=$2
+                   AND LOWER(BTRIM(name)) = LOWER(BTRIM($3))
+             )",
         )
         .bind(r.passenger_id)
+        .bind(u.id)
         .bind(&r.rider_name)
-        .fetch_optional(&st.db)
-        .await?
-        .flatten();
-        if proxy_cg == Some(u.id) {
+        .fetch_one(&st.db)
+        .await?;
+        if is_caregiver {
             return Ok(true);
         }
     }

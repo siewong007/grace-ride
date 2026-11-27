@@ -72,8 +72,10 @@ async fn check_area(st: &AppState, u: &CurrentUser, area_id: Option<i64>) -> App
 /// A cover photo must be an image the saver uploaded themselves, so nobody can surface
 /// someone else's receipt by naming its id. Keeping the event's current photo is always
 /// fine, so an admin editing another organiser's event doesn't lose it.
-async fn check_photo(
-    st: &AppState,
+/// Locks the referenced `files` row (`FOR KEY SHARE`) inside the event save transaction
+/// so orphan GC cannot remove a cover photo between check and commit.
+async fn check_photo_on(
+    conn: &mut sqlx::PgConnection,
     u: &CurrentUser,
     file_id: Option<i64>,
     current: Option<i64>,
@@ -82,12 +84,13 @@ async fn check_photo(
     if Some(fid) == current {
         return Ok(());
     }
-    let ok: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM files WHERE id=$1 AND owner_id=$2 AND mime LIKE 'image/%'")
-            .bind(fid)
-            .bind(u.id)
-            .fetch_optional(&st.db)
-            .await?;
+    let ok: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM files WHERE id=$1 AND owner_id=$2 AND mime LIKE 'image/%' FOR KEY SHARE",
+    )
+    .bind(fid)
+    .bind(u.id)
+    .fetch_optional(&mut *conn)
+    .await?;
     ok.map(|_| ()).ok_or(bad(u.lang, ErrorKey::InvalidPhoto))
 }
 
@@ -207,7 +210,6 @@ pub(super) async fn create_event(
     let status = parse_create_status(req.status.as_deref(), u.lang)?;
     let (at, dl) = validate(&req, u.lang)?;
     let icon = normalize_icon(req.icon.as_deref(), u.lang)?;
-    check_photo(&st, &u, req.photo_file_id, None).await?;
     check_area(&st, &u, req.area_id).await?;
     let freq = req.repeat_frequency.as_deref().unwrap_or("none");
     if !matches!(freq, "none" | "weekly" | "biweekly" | "monthly") {
@@ -242,6 +244,7 @@ pub(super) async fn create_event(
 
     // The event(s) and their audience are saved together, or not at all.
     let mut tx = st.db.begin().await?;
+    check_photo_on(&mut tx, &u, req.photo_file_id, None).await?;
     let mut created_ids = Vec::with_capacity(repeat_count as usize);
     for idx in 0..repeat_count {
         let occ_at = shift_occurrence(&at, freq, idx);
@@ -506,11 +509,11 @@ pub(super) async fn update_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     let icon = normalize_icon(req.icon.as_deref(), u.lang)?;
-    check_photo(&st, &u, req.photo_file_id, e.photo_file_id).await?;
     check_area(&st, &u, req.area_id).await?;
     // Same event lock as `signup` / `withdraw`: places a raised capacity opens go to the
     // waitlist, in order, before any signup queued behind this save can take them.
     let mut tx = st.db.begin().await?;
+    check_photo_on(&mut tx, &u, req.photo_file_id, e.photo_file_id).await?;
     let (
         event_status,
         cur_starts_at,
@@ -804,7 +807,47 @@ pub(super) async fn cancel_event(
         &format!("event {id} cancelled"),
     )
     .await?;
+    let rejected_reimbs: Vec<(i64, i64)> = sqlx::query_as(
+        "UPDATE reimbursements SET status='rejected', review_note='活动已取消', updated_at=$2
+         WHERE event_id=$1
+           AND kind IN ('mileage','visitor_special')
+           AND status IN ('pending','approved')
+           AND batch_id IS NULL
+         RETURNING id, user_id",
+    )
+    .bind(id)
+    .bind(now())
+    .fetch_all(&mut *tx)
+    .await?;
+    let rejected_reimb_ids: Vec<i64> = rejected_reimbs.iter().map(|(rid, _)| *rid).collect();
+    audit_many(
+        &mut *tx,
+        Some(u.id),
+        "reimbursement.reject",
+        "reimbursement",
+        &rejected_reimb_ids,
+        &format!("event {id} cancelled"),
+    )
+    .await?;
     tx.commit().await?;
+
+    let reimb_claimers: Vec<i64> = rejected_reimbs
+        .into_iter()
+        .map(|(_, uid)| uid)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    notify_many(
+        &st.db,
+        &reimb_claimers,
+        (
+            "活动已取消，相关报销申请已关闭",
+            "Event cancelled; related reimbursement claims closed",
+        ),
+        (e.title.as_str(), e.title.as_str()),
+        "/reimbursements",
+    )
+    .await;
 
     if prev_status.as_deref() == Some("published") {
         notify_signups(

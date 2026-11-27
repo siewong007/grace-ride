@@ -327,12 +327,13 @@ pub(super) async fn create_ride(
     tx.commit().await?;
 
     if is_proxy && req.save_proxy_rider.unwrap_or(false) && !rider_name.is_empty() {
-        let exists: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM proxy_riders WHERE user_id=$1 AND name=$2")
-                .bind(u.id)
-                .bind(&rider_name)
-                .fetch_optional(&st.db)
-                .await?;
+        let exists: Option<(i64,)> = sqlx::query_as(
+            "SELECT id FROM proxy_riders WHERE user_id=$1 AND LOWER(BTRIM(name))=LOWER(BTRIM($2))",
+        )
+        .bind(u.id)
+        .bind(&rider_name)
+        .fetch_optional(&st.db)
+        .await?;
         if exists.is_none() {
             let _ = sqlx::query(
                 "INSERT INTO proxy_riders (user_id, name, phone, relationship, notes, area_id, pickup_address, gate_notes, created_at, updated_at)
@@ -680,6 +681,17 @@ pub(super) async fn passenger_respond(
     }
     require(&u, Page::Rides, Act::Update)?;
     if req.accept {
+        let mut tx = st.db.begin().await?;
+        if let Some(eid) = r.event_id {
+            let ev_status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                    .bind(eid)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if ev_status.as_deref() != Some("published") {
+                return Err(bad(u.lang, ErrorKey::EventNotOpen));
+            }
+        }
         let accepted = sqlx::query(
             "UPDATE rides SET status='pending_approval', updated_at=$1
              WHERE id=$2 AND driver_id IS NOT DISTINCT FROM $3 AND status='pending_passenger'",
@@ -687,11 +699,12 @@ pub(super) async fn passenger_respond(
         .bind(now())
         .bind(id)
         .bind(r.driver_id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
         if accepted.rows_affected() == 0 {
             return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
         }
+        tx.commit().await?;
         let line = format!(
             "{} ← {} · {}",
             r.p_name,

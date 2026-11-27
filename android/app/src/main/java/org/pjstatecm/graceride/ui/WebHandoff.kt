@@ -18,15 +18,38 @@ import androidx.core.net.toUri
  * browser package so verified App Links do not loop back into this app, and falling back to an
  * external `ACTION_VIEW` browser for non-Custom-Tabs environments or custom schemes (`tg://`).
  */
+internal fun isSafeExternalWebUrl(
+    raw: String,
+    allowDebugHttp: Boolean = org.pjstatecm.graceride.BuildConfig.DEBUG,
+): Boolean {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty() || trimmed.any { it.isISOControl() || it.isWhitespace() }) {
+        return false
+    }
+    val parsed = try {
+        java.net.URI(trimmed)
+    } catch (_: IllegalArgumentException) {
+        return false
+    }
+    val scheme = parsed.scheme?.lowercase() ?: return false
+    val host = parsed.host?.trim().orEmpty()
+    if (scheme == "tg") {
+        return host == "resolve" || parsed.schemeSpecificPart?.startsWith("//resolve") == true
+    }
+    val schemeAllowed = scheme == "https" || (scheme == "http" && allowDebugHttp)
+    if (!schemeAllowed || host.isEmpty() || !parsed.userInfo.isNullOrEmpty()) {
+        return false
+    }
+    return true
+}
+
 fun openInWebApp(context: Context, url: String) {
-    val uri = url.toUri()
-    val scheme = uri.scheme?.lowercase()
-    val isHttpAllowed = scheme == "https" || (scheme == "http" && org.pjstatecm.graceride.BuildConfig.DEBUG)
-    val isTelegram = scheme == "tg"
-    if (!isHttpAllowed && !isTelegram) {
+    if (!isSafeExternalWebUrl(url)) {
         return
     }
-    val isWebUrl = isHttpAllowed
+    val uri = url.trim().toUri()
+    val scheme = uri.scheme?.lowercase()
+    val isWebUrl = scheme == "https" || (scheme == "http" && org.pjstatecm.graceride.BuildConfig.DEBUG)
     if (isWebUrl) {
         val customTabsPkg = runCatching { CustomTabsClient.getPackageName(context, null) }
             .getOrNull()

@@ -111,30 +111,39 @@ impl EventHub {
     }
 }
 
-static EVENTS: OnceLock<EventHub> = OnceLock::new();
-static ACTIVE_STREAMS: OnceLock<StdMutex<HashMap<i64, usize>>> = OnceLock::new();
+struct StreamEntry {
+    stream_id: u64,
+    session_hash: String,
+    revoke_tx: tokio::sync::watch::Sender<bool>,
+}
 
-fn stream_map() -> &'static StdMutex<HashMap<i64, usize>> {
+static EVENTS: OnceLock<EventHub> = OnceLock::new();
+static ACTIVE_STREAMS: OnceLock<StdMutex<HashMap<i64, Vec<StreamEntry>>>> = OnceLock::new();
+static NEXT_STREAM_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn stream_map() -> &'static StdMutex<HashMap<i64, Vec<StreamEntry>>> {
     ACTIVE_STREAMS.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
-struct StreamGuard(i64);
+struct StreamGuard {
+    user_id: i64,
+    stream_id: u64,
+}
 impl Drop for StreamGuard {
     fn drop(&mut self) {
         let mut became_empty = false;
         if let Ok(mut map) = stream_map().lock() {
-            if let Some(count) = map.get_mut(&self.0) {
-                if *count <= 1 {
-                    map.remove(&self.0);
+            if let Some(entries) = map.get_mut(&self.user_id) {
+                entries.retain(|e| e.stream_id != self.stream_id);
+                if entries.is_empty() {
+                    map.remove(&self.user_id);
                     became_empty = true;
-                } else {
-                    *count -= 1;
                 }
             }
         }
         if became_empty {
             if let Some(hub) = EVENTS.get() {
-                hub.remove_if_empty(self.0);
+                hub.remove_if_empty(self.user_id);
             }
         }
     }
@@ -163,7 +172,44 @@ pub fn has_active_stream(user_id: i64) -> bool {
     stream_map()
         .lock()
         .ok()
-        .is_some_and(|map| map.get(&user_id).copied().unwrap_or(0) > 0)
+        .is_some_and(|map| map.get(&user_id).is_some_and(|entries| !entries.is_empty()))
+}
+
+/// Immediately terminate any active SSE streams for a specific revoked session hash.
+pub fn revoke_session(session_hash: &str) {
+    if let Ok(map) = stream_map().lock() {
+        for entries in map.values() {
+            for entry in entries {
+                if entry.session_hash == session_hash {
+                    let _ = entry.revoke_tx.send(true);
+                }
+            }
+        }
+    }
+}
+
+/// Immediately terminate any active SSE streams for all other sessions of a user.
+pub fn revoke_other_sessions(user_id: i64, keep_session_hash: &str) {
+    if let Ok(map) = stream_map().lock() {
+        if let Some(entries) = map.get(&user_id) {
+            for entry in entries {
+                if entry.session_hash != keep_session_hash {
+                    let _ = entry.revoke_tx.send(true);
+                }
+            }
+        }
+    }
+}
+
+/// Immediately terminate all active SSE streams owned by `user_id`.
+pub fn revoke_user(user_id: i64) {
+    if let Ok(map) = stream_map().lock() {
+        if let Some(entries) = map.get(&user_id) {
+            for entry in entries {
+                let _ = entry.revoke_tx.send(true);
+            }
+        }
+    }
 }
 
 /// How often an open stream checks that its session is still valid.
@@ -185,23 +231,32 @@ pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
     .bind(crate::util::now())
     .fetch_one(db)
     .await
-    // A database hiccup keeps the stream; only a clear "gone" ends it.
-    .map_or(true, |n| n > 0)
+    // Fail closed when session validity cannot be verified.
+    .is_ok_and(|n| n > 0)
 }
 
 pub async fn handler(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let stream_id = NEXT_STREAM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (revoke_tx, revoke_rx) = tokio::sync::watch::channel(false);
     {
         let mut map = stream_map().lock().unwrap_or_else(|e| e.into_inner());
-        let count = map.entry(u.id).or_insert(0);
-        if *count >= MAX_STREAMS_PER_USER {
+        let entries = map.entry(u.id).or_default();
+        if entries.len() >= MAX_STREAMS_PER_USER {
             return Err(bad(u.lang, ErrorKey::RateLimited));
         }
-        *count += 1;
+        entries.push(StreamEntry {
+            stream_id,
+            session_hash: u.session_id.clone(),
+            revoke_tx,
+        });
     }
-    let guard = Arc::new(StreamGuard(u.id));
+    let guard = Arc::new(StreamGuard {
+        user_id: u.id,
+        stream_id,
+    });
     let rx = st.events.subscribe(u.id);
     let pushes = BroadcastStream::new(rx).filter_map(move |msg| {
         // A lagged receiver just misses a tick; the next poll catches up.
@@ -243,10 +298,13 @@ pub async fn handler(
             Tick::Session(tick)
         }
     });
+    let revoked =
+        WatchStream::new(revoke_rx).filter_map(|revoked| revoked.then_some(Tick::Session(false)));
     let shutdown = WatchStream::new(st.shutdown.subscribe())
         .filter_map(|stop| stop.then_some(Tick::Session(false)));
     let stream = pushes
         .merge(checks)
+        .merge(revoked)
         .merge(shutdown)
         .take_while(|t| !matches!(t, Tick::Session(false)))
         .filter_map(move |t| {

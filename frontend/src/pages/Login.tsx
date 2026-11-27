@@ -12,7 +12,7 @@ import { useTurnstile } from '../turnstile';
 import { getDevicePasskey, loginWithPasskey, passkeySupported, type DevicePasskeyInfo } from '../webauthn';
 import { clearAutoLock } from '../components/AutoLock';
 import { safeInternalPath } from '../guideLinks';
-import { clearClientSessionStorage } from '../offlineSnapshot';
+import { clearClientSessionStorage, clearPendingLogout } from '../offlineSnapshot';
 import { detectInAppBrowser, inAppBrowserName } from '../inAppBrowser';
 
 type DevUser = { name: string; email: string; roles: string };
@@ -150,6 +150,7 @@ export default function Login() {
 
   const done = async () => {
     clearAutoLock();
+    clearPendingLogout();
     await refresh();
     nav(from, { replace: true });
   };
@@ -365,6 +366,7 @@ export default function Login() {
       setGoogleTotpCode('');
       clearAutoLock();
       clearClientSessionStorage();
+      clearPendingLogout();
       await refresh();
       nav(redirectTarget, { replace: true });
     }

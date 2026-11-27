@@ -227,6 +227,8 @@ write_pre_roll_dump() {
   ls -1t /opt/grace-ride/pre-roll-backups/pre-*.dump* 2>/dev/null | tail -n +3 | xargs -r rm -f
 }
 
+ensure_secrets_encryption_key
+
 initial_users=0
 pre_dump_done=0
 if [[ "$(docker inspect -f '{{.State.Running}}' grace-ride-db 2>/dev/null || echo false)" == "true" ]]; then
@@ -310,7 +312,6 @@ rollback() {
 }
 trap rollback ERR
 
-ensure_secrets_encryption_key
 set_image_tag "$TAG"
 grep -q "^IMAGE_TAG=${TAG}$" /opt/grace-ride/secrets.env
 docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps --force-recreate app

@@ -176,4 +176,47 @@ final class BughunterRemediationTests: XCTestCase {
         XCTAssertEqual(QrParsing.parseCheckinInput("GRPASS:10:MEM42", currentEventId: 10), .invalid)
         XCTAssertEqual(QrParsing.parseCheckinInput("grpass:10:MEM42", currentEventId: 10), .invalid)
     }
+
+    func testWidgetSnapshotStoreUsesSecureStoreOnlyAndScrubsLegacyUserDefaults() {
+        let suiteName = "group.org.pjstatecm.graceride.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = InMemorySecureStore()
+        defaults.set(#"{"signedIn":true,"title":"LEGACY PLAINTEXT PII"}"#, forKey: "widget_summary_v1")
+
+        // Loading must ignore legacy UserDefaults plaintext and scrub it immediately.
+        let beforeSave = WidgetSnapshotStore.load(from: store, userDefaults: defaults)
+        XCTAssertFalse(beforeSave.signedIn)
+        XCTAssertNil(defaults.string(forKey: "widget_summary_v1"))
+
+        let ride = Ride(
+            id: 91,
+            status: "confirmed",
+            pickupAt: KlTime.today() + " 08:30:00",
+            area: RideArea(id: 1, name: "SS2"),
+            passenger: RidePassenger(id: 1, name: "Member"),
+            viewer: RideViewer(isPassenger: true)
+        )
+        WidgetSnapshotStore.saveFromHome(
+            signedIn: true,
+            nextRide: ride,
+            nextEvent: nil,
+            lang: "en",
+            hideLockDetails: false,
+            store: store,
+            userDefaults: defaults
+        )
+
+        XCTAssertNotNil(store.getString("widget_summary_v1"))
+        XCTAssertNil(defaults.string(forKey: "widget_summary_v1"))
+        let loaded = WidgetSnapshotStore.load(from: store, userDefaults: defaults)
+        XCTAssertTrue(loaded.signedIn)
+        XCTAssertEqual(loaded.rideId, 91)
+
+        WidgetSnapshotStore.clear(store: store, userDefaults: defaults)
+        XCTAssertNil(store.getString("widget_summary_v1"))
+        XCTAssertNil(defaults.string(forKey: "widget_summary_v1"))
+        XCTAssertFalse(WidgetSnapshotStore.load(from: store, userDefaults: defaults).signedIn)
+    }
 }

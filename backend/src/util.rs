@@ -338,11 +338,42 @@ static ALERT_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 pub fn alert_client() -> &'static reqwest::Client {
     ALERT_HTTP.get_or_init(|| {
         reqwest::Client::builder()
+            .use_rustls_tls()
             .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .expect("HTTP client build failed")
     })
+}
+
+/// Read an HTTP response body into memory while enforcing a hard byte limit.
+pub async fn read_response_bytes_bounded(
+    mut res: reqwest::Response,
+    max_bytes: usize,
+) -> anyhow::Result<Vec<u8>> {
+    if let Some(len) = res.content_length() {
+        if len > max_bytes as u64 {
+            anyhow::bail!("HTTP response too large ({len} bytes > {max_bytes} byte limit)");
+        }
+    }
+    let mut out = Vec::with_capacity(
+        res.content_length()
+            .map(|l| (l as usize).min(max_bytes))
+            .unwrap_or(0)
+            .min(64 * 1024),
+    );
+    while let Some(chunk) = res
+        .chunk()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.without_url()))?
+    {
+        if out.len().saturating_add(chunk.len()) > max_bytes {
+            anyhow::bail!("HTTP response exceeded {max_bytes} byte limit");
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
 }
 
 pub async fn validate_http_target(raw: &str, max_len: usize, dev_mode: bool) -> bool {

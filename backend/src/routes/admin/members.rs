@@ -685,6 +685,9 @@ pub(super) async fn update_user(
         }
     }
     tx.commit().await?;
+    if req.status == "disabled" {
+        crate::stream::revoke_user(id);
+    }
     if old_status == "pending" && req.status == "active" {
         // The member is waiting on the pending screen; this also refreshes their session live.
         crate::util::notify(

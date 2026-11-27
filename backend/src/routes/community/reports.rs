@@ -707,7 +707,7 @@ pub(super) async fn monthly_report(
              JOIN settlements s ON s.id=sh.settlement_id
              JOIN events e ON e.id=s.event_id
              WHERE sh.user_id=$1 AND sh.status='confirmed'
-               AND s.status <> 'draft' AND e.status <> 'draft'
+               AND s.status <> 'draft' AND e.status NOT IN ('draft', 'cancelled')
                AND e.starts_at >= $2 AND e.starts_at < $3",
         )
         .bind(target)
@@ -858,7 +858,7 @@ pub(super) async fn monthly_report(
                            COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS collected_cents
                     FROM settlements s
                     JOIN events e ON e.id = s.event_id
-                    WHERE s.created_by = $1 AND s.status <> 'draft' AND e.status <> 'draft'
+                    WHERE s.created_by = $1 AND s.status <> 'draft' AND e.status NOT IN ('draft', 'cancelled')
                       AND e.starts_at >= $2 AND e.starts_at < $3
                 )
                 SELECT COUNT(*)::BIGINT,

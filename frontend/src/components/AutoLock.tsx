@@ -57,6 +57,10 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   const nav = useNavigate();
   const meId = me ? String(me.id) : null;
   const [isLocked, setIsLocked] = useState(() => meId !== null && readStore(LOCKED_KEY) === meId);
+  const [unlockedServerLock, setUnlockedServerLock] = useState(false);
+  const effectiveLocked = Boolean(
+    me && (isLocked || (me.locked && !unlockedServerLock) || (meId !== null && readStore(LOCKED_KEY) === meId)),
+  );
   const meIdRef = useRef(meId);
   meIdRef.current = meId;
   const lastActiveRef = useRef<number>(Date.now());
@@ -103,25 +107,32 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
     setCode('');
     setShowCode(false);
     setIdleLocked(false);
+    setUnlockedServerLock(true);
     setIsLocked(false);
     window.dispatchEvent(new Event('gr:session-unlocked'));
   }, []);
 
   useEffect(() => {
+    if (!me?.locked && unlockedServerLock) {
+      setUnlockedServerLock(false);
+    }
+  }, [me?.locked, unlockedServerLock]);
+
+  useEffect(() => {
     const el = bgRef.current;
     if (!el) return;
-    el.inert = Boolean(isLocked && me);
-  }, [isLocked, me]);
+    el.inert = effectiveLocked;
+  }, [effectiveLocked]);
 
   // `me` loads after the first render: pick up a local or server-enforced lock.
   useEffect(() => {
-    if (meId !== null && (readStore(LOCKED_KEY) === meId || me?.locked)) {
+    if (meId !== null && (readStore(LOCKED_KEY) === meId || (me?.locked && !unlockedServerLock))) {
       writeStore(LOCKED_KEY, meId);
       clearOfflineSnapshots();
       setIsLocked(true);
       window.dispatchEvent(new Event('gr:session-locked'));
     }
-  }, [meId, me?.locked]);
+  }, [meId, me?.locked, unlockedServerLock]);
 
   useEffect(() => {
     const onServerLocked = () => {
@@ -158,7 +169,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
   // Activity listeners to reset the inactivity timer
   useEffect(() => {
-    if (!me || timeoutMins <= 0 || isLocked || !canLock) return;
+    if (!me || timeoutMins <= 0 || effectiveLocked || !canLock) return;
 
     const onActivity = () => {
       lastActiveRef.current = Date.now();
@@ -183,14 +194,14 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       events.forEach((ev) => window.removeEventListener(ev, onActivity));
       clearInterval(interval);
     };
-  }, [me, timeoutMins, isLocked, canLock, lock]);
+  }, [me, timeoutMins, effectiveLocked, canLock, lock]);
 
   // Focus the code field in the code view, otherwise the unlock button.
   useEffect(() => {
-    if (!isLocked) return;
+    if (!effectiveLocked) return;
     if (codeView) codeInputRef.current?.focus();
     else unlockBtnRef.current?.focus();
-  }, [isLocked, codeView]);
+  }, [effectiveLocked, codeView]);
 
   // Unlocking needs a fresh passkey, TOTP/backup code, or dev-mode unlock; never opens on a plain click without auth.
   const triggerShake = useCallback(() => {
@@ -264,11 +275,11 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ isLocked, canLock, lock, unlock }}>
-      <div ref={bgRef} data-autolock-state={isLocked && me ? 'locked' : 'unlocked'}>
-        {!(isLocked && me) && children}
+    <Ctx.Provider value={{ isLocked: effectiveLocked, canLock, lock, unlock }}>
+      <div ref={bgRef} data-autolock-state={effectiveLocked ? 'locked' : 'unlocked'}>
+        {!effectiveLocked && children}
       </div>
-      {isLocked && me && (
+      {effectiveLocked && me && (
         <div
           className="lock-screen-bg"
           role="dialog"

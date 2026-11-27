@@ -77,6 +77,7 @@ fun VenueCheckinQrDialog(
     onDismiss: () -> Unit,
     onCopied: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val context = LocalContext.current
     var confirmReset by remember { mutableStateOf(false) }
 
@@ -172,6 +173,7 @@ fun WalkInCheckinDialog(
     onPickUser: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.event_walk_in_btn)) },
@@ -244,6 +246,7 @@ fun PostEventReimbSheet(
     onSubmit: (PostEventReimbursementsReq) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var supperAreaId by remember { mutableStateOf<Long?>(null) }
     var supperAreaExpanded by remember { mutableStateOf(false) }

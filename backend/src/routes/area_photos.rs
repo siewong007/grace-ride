@@ -396,7 +396,7 @@ async fn reorder_photos(
     Ok(Json(json!({"ok": true})))
 }
 
-pub use crate::routes::files::strip_jpeg_metadata;
+pub use crate::routes::files::{strip_jpeg_metadata, strip_jpeg_metadata_strict};
 
 /// Rewrite a stored JPEG without its metadata segments. Leaves the file as it is when it
 /// cannot be parsed or has nothing to strip.
@@ -407,7 +407,7 @@ async fn strip_jpeg_file(st: &AppState, stored: &str) {
     let Ok(data) = tokio::fs::read(&path).await else {
         return;
     };
-    if let Some(clean) = strip_jpeg_metadata(&data) {
+    if let Ok(Some(clean)) = strip_jpeg_metadata_strict(&data) {
         if let Err(e) = tokio::fs::write(&path, &clean).await {
             tracing::warn!("could not strip photo metadata: {e}");
         } else {
@@ -422,7 +422,7 @@ async fn strip_jpeg_file(st: &AppState, stored: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_jpeg_metadata;
+    use super::strip_jpeg_metadata_strict;
 
     #[test]
     fn strips_exif_and_keeps_the_image() {
@@ -433,7 +433,9 @@ mod tests {
         jpg.extend_from_slice(&app0);
         jpg.extend_from_slice(&exif);
         jpg.extend_from_slice(&scan);
-        let clean = strip_jpeg_metadata(&jpg).expect("exif removed");
+        let clean = strip_jpeg_metadata_strict(&jpg)
+            .expect("valid jpeg")
+            .expect("exif removed");
         let mut want = vec![0xFF, 0xD8];
         want.extend_from_slice(&app0);
         want.extend_from_slice(&scan);
@@ -443,8 +445,11 @@ mod tests {
     #[test]
     fn leaves_clean_or_broken_files_alone() {
         let clean = [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9];
-        assert_eq!(strip_jpeg_metadata(&clean), None);
-        assert_eq!(strip_jpeg_metadata(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF]), None);
-        assert_eq!(strip_jpeg_metadata(b"\x89PNG"), None);
+        assert_eq!(strip_jpeg_metadata_strict(&clean), Ok(None));
+        assert_eq!(
+            strip_jpeg_metadata_strict(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF]),
+            Err(())
+        );
+        assert_eq!(strip_jpeg_metadata_strict(b"\x89PNG"), Err(()));
     }
 }

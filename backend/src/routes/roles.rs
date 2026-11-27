@@ -121,6 +121,8 @@ struct RoleIn {
     name: Option<String>,
     description: Option<String>,
     permissions: Vec<String>,
+    #[serde(default)]
+    president_acknowledged: bool,
 }
 
 fn parse_permissions(lang: Lang, raw: &[String]) -> AppResult<PermSet> {
@@ -391,6 +393,118 @@ async fn update(
     }
     guard_own_access(&mut tx, &u, &key, Some(&set)).await?;
     guard_rank(&mut tx, &u, &key, &set, &before).await?;
+
+    // Dual-control recovery guard: an admin who issued a recovery link for an unprivileged
+    // member within the last 72h (or unexpired) cannot bypass member-role promotion checks by
+    // upgrading a custom/system role already assigned to that member.
+    if set.privileged() && !before.privileged() {
+        let cutoff = crate::util::in_hours(-72);
+        let now_ts = crate::util::now();
+        let blocked_by_recovery: Option<i64> = if key == MEMBER_ROLE {
+            sqlx::query_scalar(
+                "SELECT i.id
+                 FROM invites i
+                 JOIN users tgt ON tgt.id = i.user_id
+                 WHERE i.kind = 'recovery'
+                   AND i.created_by = $1
+                   AND tgt.status = 'active'
+                   AND ((i.used_at IS NULL AND i.expires_at > $2) OR i.used_at >= $3)
+                 LIMIT 1",
+            )
+            .bind(u.id)
+            .bind(&now_ts)
+            .bind(&cutoff)
+            .fetch_optional(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_scalar(
+                "SELECT i.id
+                 FROM invites i
+                 JOIN member_roles mr ON mr.user_id = i.user_id
+                 WHERE mr.role_key = $1
+                   AND i.kind = 'recovery'
+                   AND i.created_by = $2
+                   AND ((i.used_at IS NULL AND i.expires_at > $3) OR i.used_at >= $4)
+                 LIMIT 1",
+            )
+            .bind(&key)
+            .bind(u.id)
+            .bind(&now_ts)
+            .bind(&cutoff)
+            .fetch_optional(&mut *tx)
+            .await?
+        };
+        if blocked_by_recovery.is_some() {
+            return Err(forbidden(u.lang, ErrorKey::SecondAdminRequired));
+        }
+    }
+
+    // Vice-President adding admin-management power to a role held by any non-admin member
+    // must confirm President's acknowledgement identically to promoting a user directly.
+    let power = perms::admin_power_keys();
+    let old_keys = before.keys();
+    let new_keys = set.keys();
+    let adds_admin_power = new_keys
+        .iter()
+        .any(|k| !old_keys.contains(k) && power.contains(k));
+    let mut president_ack_audit = false;
+    if adds_admin_power && perms::needs_president_ack(&caller_roles) {
+        let promotes_non_admin: bool = if key == MEMBER_ROLE {
+            sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM users u2
+                     WHERE u2.status IN ('active', 'pending')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM member_roles mr
+                           WHERE mr.user_id = u2.id AND mr.role_key = $1
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM member_roles mr
+                           JOIN role_permissions rp ON rp.role_key = mr.role_key
+                           WHERE mr.user_id = u2.id AND mr.role_key <> $2 AND rp.permission = ANY($3)
+                       )
+                 )",
+            )
+            .bind(ADMIN_ROLE)
+            .bind(MEMBER_ROLE)
+            .bind(&power)
+            .fetch_one(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM member_roles holder
+                     WHERE holder.role_key = $1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM member_roles mr
+                           WHERE mr.user_id = holder.user_id AND mr.role_key = $2
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM member_roles mr
+                           JOIN role_permissions rp ON rp.role_key = mr.role_key
+                           WHERE mr.user_id = holder.user_id
+                             AND mr.role_key <> $1
+                             AND rp.permission = ANY($3)
+                       )
+                 )",
+            )
+            .bind(&key)
+            .bind(ADMIN_ROLE)
+            .bind(&power)
+            .fetch_one(&mut *tx)
+            .await?
+        };
+        if promotes_non_admin {
+            if !req.president_acknowledged {
+                return Err(forbidden(
+                    u.lang,
+                    ErrorKey::PresidentAcknowledgementRequired,
+                ));
+            }
+            president_ack_audit = true;
+        }
+    }
+
     // Built-in roles are named by the app in each member's language.
     let name = if is_system == 1 {
         old_name
@@ -466,7 +580,16 @@ async fn update(
         "role.update",
         "role",
         None,
-        format!("{key}: +[{}] -[{}]", added.join(", "), removed.join(", ")),
+        format!(
+            "{key}: +[{}] -[{}]{}",
+            added.join(", "),
+            removed.join(", "),
+            if president_ack_audit {
+                "; Vice-President confirmed President's acknowledgement"
+            } else {
+                ""
+            }
+        ),
     )
     .await;
     Ok(Json(json!({ "ok": true })))

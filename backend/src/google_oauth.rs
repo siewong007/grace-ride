@@ -163,6 +163,17 @@ impl GoogleOAuthClient {
         code_verifier: &str,
         login_hint: Option<&str>,
     ) -> AppResult<String> {
+        self.authorization_url_with_prompt(state, code_verifier, login_hint, "select_account", None)
+    }
+
+    pub fn authorization_url_with_prompt(
+        &self,
+        state: &str,
+        code_verifier: &str,
+        login_hint: Option<&str>,
+        prompt: &str,
+        max_age: Option<u64>,
+    ) -> AppResult<String> {
         let client_id = self
             .cfg
             .client_id
@@ -180,7 +191,10 @@ impl GoogleOAuthClient {
             q.append_pair("state", state);
             q.append_pair("code_challenge", &challenge);
             q.append_pair("code_challenge_method", "S256");
-            q.append_pair("prompt", "select_account");
+            q.append_pair("prompt", prompt);
+            if let Some(age) = max_age {
+                q.append_pair("max_age", &age.to_string());
+            }
             if let Some(hint) = login_hint.map(str::trim).filter(|s| !s.is_empty()) {
                 q.append_pair("login_hint", hint);
             }
@@ -234,7 +248,13 @@ impl GoogleOAuthClient {
             return Err(bad(lang, ErrorKey::GoogleAuthFailed));
         }
 
-        let token_body: TokenResponse = token_res.json().await.map_err(|e| {
+        let token_bytes = crate::util::read_response_bytes_bounded(token_res, 64 * 1024)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "google token response read failed");
+                bad(lang, ErrorKey::GoogleAuthFailed)
+            })?;
+        let token_body: TokenResponse = serde_json::from_slice(&token_bytes).map_err(|e| {
             tracing::warn!(error = %e, "google token response invalid json");
             bad(lang, ErrorKey::GoogleAuthFailed)
         })?;
@@ -263,7 +283,13 @@ impl GoogleOAuthClient {
             return Err(bad(lang, ErrorKey::GoogleAuthFailed));
         }
 
-        let info: UserInfoResponse = userinfo_res.json().await.map_err(|e| {
+        let userinfo_bytes = crate::util::read_response_bytes_bounded(userinfo_res, 64 * 1024)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "google userinfo response read failed");
+                bad(lang, ErrorKey::GoogleAuthFailed)
+            })?;
+        let info: UserInfoResponse = serde_json::from_slice(&userinfo_bytes).map_err(|e| {
             tracing::warn!(error = %e, "google userinfo invalid json");
             bad(lang, ErrorKey::GoogleAuthFailed)
         })?;

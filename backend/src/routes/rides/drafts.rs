@@ -791,6 +791,14 @@ pub(super) async fn approve_ride_draft(
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("SELECT id FROM rides WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let r = super::load_ride_on(&mut tx, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
 
     let draft_info: Option<(
         String,

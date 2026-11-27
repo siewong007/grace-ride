@@ -77,6 +77,7 @@ fun CarePassScreen(
     token: String,
     onBack: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: CarePassViewModel = viewModel(
         key = "care_$token",
         factory = CarePassViewModel.factory(container, token),

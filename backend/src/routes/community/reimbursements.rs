@@ -157,8 +157,8 @@ pub(super) async fn list_reimbursements(
     // Payee-name matches follow the same per-claim visibility as reimb_json.
     let where_sql = format!(
         "WHERE {scope_filter}
-         AND ($3::text IS NULL OR u.name ILIKE $3 OR r.description ILIKE $3
-              OR (($2 OR r.user_id = $1) AND r.payee_name ILIKE $3))
+         AND ($3::text IS NULL OR u.name ILIKE $3 ESCAPE '\\' OR r.description ILIKE $3 ESCAPE '\\'
+              OR (($2 OR r.user_id = $1) AND r.payee_name ILIKE $3 ESCAPE '\\'))
          AND ($4::text IS NULL OR r.status = $4)"
     );
     let total = if is_paginated {
@@ -619,6 +619,17 @@ pub(super) async fn review_reimbursement(
     if status != "approved" && note.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::ReasonRequired));
     }
+    // Preserve HTTP 400 semantics when reviewing an already-processed claim sequentially.
+    let pre_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM reimbursements WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?;
+    if let Some(ref s) = pre_status {
+        if s != "pending" {
+            return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
+        }
+    }
     let mut tx = st.db.begin().await?;
     let locked: Option<(
         i64,
@@ -626,11 +637,12 @@ pub(super) async fn review_reimbursement(
         String,
         String,
         Option<i64>,
+        Option<i64>,
         i64,
         String,
         String,
     )> = sqlx::query_as(
-        "SELECT r.user_id, r.requested_by, r.status, r.kind, r.ride_id, r.amount_cents,
+        "SELECT r.user_id, r.requested_by, r.status, r.kind, r.ride_id, r.event_id, r.amount_cents,
                     r.updated_at, u.name
              FROM reimbursements r
              JOIN users u ON u.id = r.user_id
@@ -646,12 +658,13 @@ pub(super) async fn review_reimbursement(
         r_status,
         r_kind,
         r_ride_id,
+        r_event_id,
         r_amount_cents,
         r_updated_at,
         r_user_name,
     ) = locked.ok_or_else(|| not_found(u.lang))?;
     if r_status != "pending" {
-        return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
+        return Err(conflict(u.lang, ErrorKey::ReimbAlreadyReviewed));
     }
     if let Some(ref exp) = req.expected_updated_at {
         if exp != &r_updated_at {
@@ -665,6 +678,31 @@ pub(super) async fn review_reimbursement(
     // Returning a post-event mileage batch claim has no driver-editable resubmit path.
     if status == "returned" && r_kind == "mileage" && r_ride_id.is_none() {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    if status == "approved" && matches!(r_kind.as_str(), "mileage" | "visitor_special") {
+        let linked_event = match r_event_id {
+            Some(eid) => Some(eid),
+            None => match r_ride_id {
+                Some(rid) => {
+                    sqlx::query_scalar::<_, Option<i64>>("SELECT event_id FROM rides WHERE id=$1")
+                        .bind(rid)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                        .flatten()
+                }
+                None => None,
+            },
+        };
+        if let Some(eid) = linked_event {
+            let ev_status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                    .bind(eid)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if ev_status.as_deref() == Some("cancelled") {
+                return Err(bad(u.lang, ErrorKey::EventNotOpen));
+            }
+        }
     }
     let changed = sqlx::query(
         "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4
@@ -797,9 +835,21 @@ pub(super) async fn pay_reimbursement(
     if req.paid_ref.trim().len() < 4 {
         return Err(bad(u.lang, ErrorKey::TxnRefRequired));
     }
-    // The status check above and this update are separate statements, so a second
-    // finance admin can pass the check before the first commit. Transitioning from
-    // 'approved' in the update itself makes exactly one payout win.
+    // Lock the claim (and any linked event for mileage/visitor_special) inside a transaction
+    // so payout cannot race event cancellation or a concurrent payout on the same claim.
+    let mut tx = st.db.begin().await?;
+    if matches!(r.kind.as_str(), "mileage" | "visitor_special") {
+        if let Some(eid) = r.event_id {
+            let ev_status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                    .bind(eid)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if ev_status.as_deref() == Some("cancelled") {
+                return Err(bad(u.lang, ErrorKey::EventNotOpen));
+            }
+        }
+    }
     let paid = sqlx::query(
         "UPDATE reimbursements
          SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4
@@ -811,11 +861,12 @@ pub(super) async fn pay_reimbursement(
     .bind(now())
     .bind(now())
     .bind(id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     if paid.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
     }
+    tx.commit().await?;
     notify(
         &st.db,
         r.user_id,

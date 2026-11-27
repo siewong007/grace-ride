@@ -167,7 +167,9 @@ async fn seed_report_fixture(
 
     // 4. Reimbursements for member_id in 2031-05: one pending, one approved, one paid in a payout batch
     let member_cookie = login(st, "member@example.org").await;
-    let receipt_id = upload_png(app, &member_cookie).await;
+    let receipt_id_1 = upload_png(app, &member_cookie).await;
+    let receipt_id_2 = upload_png(app, &member_cookie).await;
+    let receipt_id_3 = upload_png(app, &member_cookie).await;
     let finance_id = uid(st, "finance@example.org").await;
     let president_id = uid(st, "president@example.org").await;
 
@@ -177,7 +179,7 @@ async fn seed_report_fixture(
     )
     .bind(member_id)
     .bind(admin_ev)
-    .bind(receipt_id)
+    .bind(receipt_id_1)
     .bind(created_ts)
     .execute(&st.db)
     .await
@@ -189,7 +191,7 @@ async fn seed_report_fixture(
     )
     .bind(member_id)
     .bind(admin_ev)
-    .bind(receipt_id)
+    .bind(receipt_id_2)
     .bind(admin_id)
     .bind(created_ts)
     .execute(&st.db)
@@ -214,7 +216,7 @@ async fn seed_report_fixture(
     )
     .bind(member_id)
     .bind(admin_ev)
-    .bind(receipt_id)
+    .bind(receipt_id_3)
     .bind(admin_id)
     .bind(president_id)
     .bind(created_ts)
@@ -1036,7 +1038,9 @@ async fn reports_hardening_metrics_and_custom_roles() {
     // 8. Finance maker-checker accuracy & cross-month payout trend
     // Two finance-capable officers creating & paying a valid batch (applicant=member_id, reviewer=admin_id)
     // must be maker_checker_ok=true! Plus self-created & paid batch -> false, and paid_by == reviewer -> false!
-    let receipt_id = upload_png(&app, &member_cookie).await;
+    let receipt_id_1 = upload_png(&app, &member_cookie).await;
+    let receipt_id_2 = upload_png(&app, &member_cookie).await;
+    let receipt_id_3 = upload_png(&app, &member_cookie).await;
     let valid_b: i64 = sqlx::query_scalar(
         "INSERT INTO payout_batches (month, title, total_cents, claim_count, status, paid_ref, created_by, paid_by, paid_at, created_at)
          VALUES ($1, 'Valid Dual-Control Batch', 1100, 1, 'paid', 'REF-OK', $2, $3, '2031-05-20T12:00:00', '2031-05-20T10:00:00') RETURNING id",
@@ -1054,7 +1058,7 @@ async fn reports_hardening_metrics_and_custom_roles() {
     )
     .bind(member_id)
     .bind(admin_ev)
-    .bind(receipt_id)
+    .bind(receipt_id_1)
     .bind(admin_id)
     .bind(president_id)
     .bind(valid_b)
@@ -1101,7 +1105,7 @@ async fn reports_hardening_metrics_and_custom_roles() {
     )
     .bind(member_id)
     .bind(admin_ev)
-    .bind(receipt_id)
+    .bind(receipt_id_2)
     .bind(admin_id)
     .bind(finance_id)
     .bind(self_b)
@@ -1129,7 +1133,7 @@ async fn reports_hardening_metrics_and_custom_roles() {
     )
     .bind(member_id)
     .bind(admin_ev)
-    .bind(receipt_id)
+    .bind(receipt_id_3)
     .bind(admin_id)
     .bind(bad_b)
     .execute(&st.db)

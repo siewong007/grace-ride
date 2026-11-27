@@ -439,6 +439,7 @@ pub fn router(state: AppState) -> Router {
             .nest_service("/assets", ServeDir::new(dir.join("assets")))
             .nest_service("/icons", ServeDir::new(dir.join("icons")))
             .route_service("/sw.js", ServeFile::new(dir.join("sw.js")))
+            .route_service("/robots.txt", ServeFile::new(dir.join("robots.txt")))
             .route_service("/version.json", ServeFile::new(dir.join("version.json")))
             .route_service(
                 "/manifest.webmanifest",

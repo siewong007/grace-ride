@@ -41,17 +41,22 @@ public enum WidgetSnapshotStore {
     public static let appGroupSuiteName = "group.org.pjstatecm.graceride"
     private static let keySummary = "widget_summary_v1"
 
+    private static func resolvedStore(_ store: SecureStore?) -> SecureStore {
+        store ?? KeychainSecureStore()
+    }
+
     public static func saveSummary(_ summary: WidgetSummary, to store: SecureStore? = nil, userDefaults: UserDefaults? = UserDefaults(suiteName: appGroupSuiteName)) {
         guard let data = try? JSONEncoder().encode(summary),
               let raw = String(data: data, encoding: .utf8) else {
             return
         }
-        store?.putString(keySummary, raw)
-        userDefaults?.set(raw, forKey: keySummary)
+        resolvedStore(store).putString(keySummary, raw)
+        userDefaults?.removeObject(forKey: keySummary)
     }
 
     public static func load(from store: SecureStore? = nil, userDefaults: UserDefaults? = UserDefaults(suiteName: appGroupSuiteName)) -> WidgetSummary {
-        let raw = userDefaults?.string(forKey: keySummary) ?? store?.getString(keySummary)
+        userDefaults?.removeObject(forKey: keySummary)
+        let raw = resolvedStore(store).getString(keySummary)
         guard let raw, let data = raw.data(using: .utf8),
               let summary = try? JSONDecoder().decode(WidgetSummary.self, from: data) else {
             return WidgetSummary(signedIn: false)
@@ -60,7 +65,7 @@ public enum WidgetSnapshotStore {
     }
 
     public static func clear(store: SecureStore? = nil, userDefaults: UserDefaults? = UserDefaults(suiteName: appGroupSuiteName)) {
-        store?.remove(keySummary)
+        resolvedStore(store).remove(keySummary)
         userDefaults?.removeObject(forKey: keySummary)
     }
 

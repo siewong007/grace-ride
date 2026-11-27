@@ -44,6 +44,14 @@ services:
     mem_limit: 160m
     cpus: 0.25
     pids_limit: 256
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - FOWNER
+      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 60s

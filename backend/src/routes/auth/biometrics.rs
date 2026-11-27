@@ -87,6 +87,8 @@ fn random_challenge_b64() -> String {
 struct BioChallengeState {
     cred_row_id: i64,
     challenge: String,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 pub(super) async fn biometric_register_start(
@@ -281,6 +283,7 @@ pub(super) async fn biometric_login_start(
     let state = serde_json::to_string(&BioChallengeState {
         cred_row_id: bc_id,
         challenge: challenge.clone(),
+        session_id: None,
     })
     .map_err(anyhow::Error::from)?;
     let cid = save_challenge(&st, uid, "bio_login", state).await?;
@@ -423,6 +426,7 @@ pub(super) async fn biometric_reauth_start(
     let state = serde_json::to_string(&BioChallengeState {
         cred_row_id: bc_id,
         challenge: challenge.clone(),
+        session_id: Some(u.session_id.clone()),
     })
     .map_err(anyhow::Error::from)?;
     let cid = save_challenge(&st, u.id, "bio_reauth", state).await?;
@@ -441,6 +445,9 @@ pub(super) async fn biometric_reauth_finish(
     }
     let st_data: BioChallengeState =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
+    if st_data.session_id.as_deref() != Some(u.session_id.as_str()) {
+        return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
+    }
     let row: Option<(Vec<u8>, bool)> = sqlx::query_as(
         "SELECT public_key, attested FROM biometric_credentials WHERE id=$1 AND user_id=$2 AND cred_id=$3",
     )

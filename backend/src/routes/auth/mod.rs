@@ -356,6 +356,7 @@ pub(super) async fn rotate_session(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::stream::revoke_session(&u.session_id);
     Ok(jar.add(build_session_cookie(state, raw, hours)))
 }
 
@@ -370,6 +371,7 @@ pub(super) async fn revoke_other_sessions(
         .bind(keep_session_hash)
         .execute(db)
         .await?;
+    crate::stream::revoke_other_sessions(user_id, keep_session_hash);
     Ok(res.rows_affected())
 }
 
@@ -852,6 +854,7 @@ async fn logout(
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
+    crate::stream::revoke_session(&u.session_id);
     audit(&st.db, Some(u.id), "logout", "user", Some(u.id), "").await;
     Ok((clear_cookies(jar), Json(json!({"ok": true}))))
 }
@@ -887,6 +890,7 @@ async fn logout_all(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::stream::revoke_user(u.id);
     audit(&st.db, Some(u.id), "logout.all", "user", Some(u.id), "").await;
     Ok((clear_cookies(jar), Json(json!({"ok": true}))))
 }

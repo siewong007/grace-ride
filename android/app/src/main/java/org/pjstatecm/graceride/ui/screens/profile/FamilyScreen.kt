@@ -75,6 +75,7 @@ import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FamilyScreen(container: AppContainer, nav: NavHostController) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: FamilyViewModel = viewModel(factory = FamilyViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()

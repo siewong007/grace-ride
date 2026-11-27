@@ -310,14 +310,19 @@ async fn apply_plan_impl(
                     .filter(|(did, leg, _)| *did == Some(*d) && (leg == "return") == is_ret)
                     .map(|(_, _, s)| *s)
                     .sum();
+                let visitor_count: i64 = eff_visitors
+                    .values()
+                    .chain(added_visitors.iter())
+                    .filter(|(did, leg, _)| *did == Some(*d) && (leg == "return") == is_ret)
+                    .count() as i64;
                 let (o_seats, o_rides) = other_map.get(d).copied().unwrap_or((0, 0));
                 let load = o_seats
                     + in_prog_seats
                     + visitor_seats
                     + mine.iter().map(|r| r.seats).sum::<i64>();
                 // Without 共乘模式 a driver takes one booking per leg/time slot.
-                let one_booking =
-                    dr.carpool_enabled == 1 || o_rides + in_prog_count + mine.len() as i64 <= 1;
+                let one_booking = dr.carpool_enabled == 1
+                    || o_rides + in_prog_count + visitor_count + mine.len() as i64 <= 1;
                 if load > cap || !one_booking {
                     return Err(bad(
                         u.lang,

@@ -41,6 +41,8 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.apiJson
+import org.pjstatecm.graceride.data.session.EncryptedPrefsStore
+import org.pjstatecm.graceride.data.session.SecureStore
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.notifications.NotificationHelper
@@ -62,15 +64,40 @@ data class WidgetSummary(
 )
 
 object WidgetSnapshotStore {
-    private const val PREFS_NAME = "gr_widget_snapshot"
-    private const val KEY_SUMMARY = "summary_v1"
+    private const val LEGACY_PREFS_NAME = "gr_widget_snapshot"
+    private const val LEGACY_KEY_SUMMARY = "summary_v1"
+    internal const val SECURE_KEY_SUMMARY = "widget_summary_v1"
 
-    fun saveSummary(context: Context, summary: WidgetSummary) {
-        val raw = apiJson.encodeToString(WidgetSummary.serializer(), summary)
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit {
-                putString(KEY_SUMMARY, raw)
+    @Volatile
+    private var fallbackStore: SecureStore? = null
+
+    private fun resolvedStore(context: Context, store: SecureStore? = null): SecureStore {
+        if (store != null) return store
+        val appCtx = context.applicationContext
+        (appCtx as? GraceRideApp)?.container?.secureStore?.let { return it }
+        return fallbackStore ?: synchronized(this) {
+            fallbackStore ?: EncryptedPrefsStore(appCtx).also { fallbackStore = it }
+        }
+    }
+
+    private fun scrubLegacyPlaintext(context: Context) {
+        runCatching {
+            val prefs = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            if (prefs.contains(LEGACY_KEY_SUMMARY)) {
+                prefs.edit(commit = true) { remove(LEGACY_KEY_SUMMARY) }
             }
+        }
+        runCatching { context.deleteSharedPreferences(LEGACY_PREFS_NAME) }
+    }
+
+    fun clearStore(store: SecureStore) {
+        store.remove(SECURE_KEY_SUMMARY)
+    }
+
+    fun saveSummary(context: Context, summary: WidgetSummary, store: SecureStore? = null) {
+        scrubLegacyPlaintext(context)
+        val raw = apiJson.encodeToString(WidgetSummary.serializer(), summary)
+        resolvedStore(context, store).putString(SECURE_KEY_SUMMARY, raw)
     }
 
     fun saveFromHome(
@@ -79,9 +106,10 @@ object WidgetSnapshotStore {
         nextRide: Ride?,
         nextEvent: EventItem?,
         hideLockDetails: Boolean = false,
+        store: SecureStore? = null,
     ) {
         if (!signedIn) {
-            clear(context)
+            clear(context, store)
             return
         }
         val lang = (context.applicationContext as? GraceRideApp)?.container?.lang
@@ -131,13 +159,13 @@ object WidgetSnapshotStore {
             }
             else -> WidgetSummary(signedIn = true)
         }
-        saveSummary(context, summary)
+        saveSummary(context, summary, store)
     }
 
-    fun markReadyLocally(context: Context, rideId: Long, status: String) {
-        val cur = load(context)
+    fun markReadyLocally(context: Context, rideId: Long, status: String, store: SecureStore? = null) {
+        val cur = load(context, store)
         if (!cur.signedIn || cur.rideId != rideId) return
-        saveSummary(context, cur.copy(showReadyButton = false, readiness = status))
+        saveSummary(context, cur.copy(showReadyButton = false, readiness = status), store)
     }
 
     fun freshForDisplay(summary: WidgetSummary): WidgetSummary {
@@ -152,19 +180,17 @@ object WidgetSnapshotStore {
         }
     }
 
-    fun load(context: Context): WidgetSummary {
-        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_SUMMARY, null)
+    fun load(context: Context, store: SecureStore? = null): WidgetSummary {
+        scrubLegacyPlaintext(context)
+        val raw = resolvedStore(context, store).getString(SECURE_KEY_SUMMARY)
             ?: return WidgetSummary(signedIn = false)
         return runCatching { apiJson.decodeFromString(WidgetSummary.serializer(), raw) }
             .getOrDefault(WidgetSummary(signedIn = false))
     }
 
-    fun clear(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit {
-                remove(KEY_SUMMARY)
-            }
+    fun clear(context: Context, store: SecureStore? = null) {
+        scrubLegacyPlaintext(context)
+        resolvedStore(context, store).remove(SECURE_KEY_SUMMARY)
     }
 
     private fun Ride.statusLabel(ctx: Context): String =

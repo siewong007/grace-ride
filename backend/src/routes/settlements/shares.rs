@@ -19,8 +19,8 @@ pub(super) async fn my_shares(
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::Costs, Act::View)?;
-    let rows: Vec<(i64, i64, String, String, i64, String, String, String, Option<i64>, Option<String>, String, String, Option<i64>)> = sqlx::query_as(
-        "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.status, s.payee_name, s.payee_account, s.payee_qr_file_id, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
+    let rows: Vec<(i64, i64, String, String, i64, i64, String, String, String, Option<i64>, Option<String>, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.paid_cents, sh.status, s.payee_name, s.payee_account, s.payee_qr_file_id, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
          FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
          WHERE sh.user_id=$1 AND s.status IN ('published','closed') AND s.created_by != $2
          ORDER BY CASE sh.status WHEN 'confirmed' THEN 1 ELSE 0 END, s.id DESC",
@@ -29,8 +29,8 @@ pub(super) async fn my_shares(
     .bind(u.id)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(json!(rows.into_iter().map(|(id, sid, t, et, amt, status, pn, pa, qr, due, note, txn, proof)| json!({
-        "id": id, "settlement_id": sid, "title": t, "event_title": et, "amount_cents": amt, "status": status,
+    Ok(Json(json!(rows.into_iter().map(|(id, sid, t, et, amt, paid_cents, status, pn, pa, qr, due, note, txn, proof)| json!({
+        "id": id, "settlement_id": sid, "title": t, "event_title": et, "amount_cents": amt, "paid_cents": paid_cents, "status": status,
         "payee_name": pn, "payee_account": pa, "payee_qr_file_id": qr, "due_date": due, "note": note, "txn_ref": txn, "proof_file_id": proof,
     })).collect::<Vec<_>>())))
 }
@@ -123,7 +123,7 @@ pub(super) async fn submit_proof(
     .bind(sid)
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4, paid_cents=amount_cents WHERE id=$5")
+    sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4, paid_cents=GREATEST(paid_cents, amount_cents) WHERE id=$5")
         .bind(req.proof_file_id)
         .bind(txn)
         .bind(req.paid_date)
@@ -236,7 +236,7 @@ pub(super) async fn verify(
     // Asking for more information leaves what was paid as it stands.
     sqlx::query(
         "UPDATE settlement_shares SET status=$1, note=$2, updated_at=$3,
-            paid_cents = CASE $1 WHEN 'confirmed' THEN amount_cents WHEN 'unpaid' THEN 0 ELSE paid_cents END,
+            paid_cents = CASE $1 WHEN 'confirmed' THEN GREATEST(paid_cents, amount_cents) WHEN 'unpaid' THEN 0 ELSE paid_cents END,
             proof_file_id = CASE WHEN $1 = 'unpaid' THEN NULL ELSE proof_file_id END,
             txn_ref = CASE WHEN $1 = 'unpaid' THEN '' ELSE txn_ref END,
             paid_date = CASE WHEN $1 = 'unpaid' THEN NULL ELSE paid_date END

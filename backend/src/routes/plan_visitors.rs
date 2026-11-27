@@ -298,12 +298,35 @@ async fn check_driver_for_visitor_tx(
     .bind(driver_id)
     .fetch_optional(&mut **tx)
     .await?;
-    let Some((_carpool, spare, v_seats)) = row else {
+    let Some((carpool, spare, v_seats)) = row else {
         return Err(bad(lang, ErrorKey::DriverNotFound));
     };
     let cap = super::rides::seat_capacity(spare, v_seats);
-    let (ride_seats,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(seats), 0)::BIGINT FROM rides
+    let ev_starts: String = sqlx::query_scalar("SELECT starts_at FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    let leg_bounds: (Option<String>, Option<String>) = if leg == "return" {
+        sqlx::query_as(
+            "SELECT MIN(pickup_at), MAX(pickup_at) FROM rides
+             WHERE event_id = $1 AND leg = 'return' AND status <> 'cancelled'",
+        )
+        .bind(event_id)
+        .fetch_one(&mut **tx)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT MIN(pickup_at), MAX(pickup_at) FROM rides
+             WHERE event_id = $1 AND leg <> 'return' AND status <> 'cancelled'",
+        )
+        .bind(event_id)
+        .fetch_one(&mut **tx)
+        .await?
+    };
+    let slot_from = leg_bounds.0.unwrap_or_else(|| ev_starts.clone());
+    let slot_to = leg_bounds.1.unwrap_or(ev_starts);
+    let (ride_seats, ride_cnt): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(seats), 0)::BIGINT, COUNT(*)::BIGINT FROM rides
          WHERE event_id = $1 AND driver_id = $2 AND leg = $3
            AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')",
     )
@@ -312,8 +335,8 @@ async fn check_driver_for_visitor_tx(
     .bind(leg)
     .fetch_one(&mut **tx)
     .await?;
-    let (visitor_seats,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(seats), 0)::BIGINT FROM plan_visitors
+    let (visitor_seats, visitor_cnt): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(seats), 0)::BIGINT, COUNT(*)::BIGINT FROM plan_visitors
          WHERE event_id = $1 AND driver_id = $2 AND leg = $3 AND id IS DISTINCT FROM $4",
     )
     .bind(event_id)
@@ -322,8 +345,65 @@ async fn check_driver_for_visitor_tx(
     .bind(exclude_visitor_id)
     .fetch_one(&mut **tx)
     .await?;
-    let load = ride_seats + visitor_seats;
-    if load + seats > cap {
+    let (other_ride_seats, other_ride_cnt, other_vis_seats, other_vis_cnt) = if let (
+        Some(from_dt),
+        Some(to_dt),
+    ) = (
+        crate::util::parse_dt(&slot_from),
+        crate::util::parse_dt(&slot_to),
+    ) {
+        let lo = (from_dt - chrono::Duration::minutes(65))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let hi = (to_dt + chrono::Duration::minutes(65))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let (ors, orc): (i64, i64) = sqlx::query_as(
+                "SELECT COALESCE(SUM(seats), 0)::BIGINT, COUNT(*)::BIGINT FROM rides
+                 WHERE driver_id = $1 AND event_id IS DISTINCT FROM $2
+                   AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')
+                   AND pickup_at >= $5 AND pickup_at <= $6
+                   AND pickup_at::timestamp BETWEEN $3::timestamp - interval '1 hour' AND $4::timestamp + interval '1 hour'",
+            )
+            .bind(driver_id)
+            .bind(event_id)
+            .bind(&slot_from)
+            .bind(&slot_to)
+            .bind(&lo)
+            .bind(&hi)
+            .fetch_one(&mut **tx)
+            .await?;
+        let (ovs, ovc): (i64, i64) = sqlx::query_as(
+                "SELECT COALESCE(SUM(pv.seats), 0)::BIGINT, COUNT(*)::BIGINT
+                 FROM plan_visitors pv
+                 JOIN events e ON e.id = pv.event_id
+                 CROSS JOIN LATERAL (
+                     SELECT COALESCE(MIN(er.pickup_at), e.starts_at) AS slot_at
+                     FROM rides er
+                     WHERE er.event_id = pv.event_id AND er.leg = pv.leg AND er.status <> 'cancelled'
+                 ) leg_time
+                 WHERE pv.driver_id = $1
+                   AND pv.event_id IS DISTINCT FROM $2
+                   AND e.status = 'published'
+                   AND NULLIF(BTRIM(leg_time.slot_at), '') IS NOT NULL
+                   AND leg_time.slot_at >= $5 AND leg_time.slot_at <= $6
+                   AND leg_time.slot_at::timestamp BETWEEN $3::timestamp - interval '1 hour' AND $4::timestamp + interval '1 hour'",
+            )
+            .bind(driver_id)
+            .bind(event_id)
+            .bind(&slot_from)
+            .bind(&slot_to)
+            .bind(&lo)
+            .bind(&hi)
+            .fetch_one(&mut **tx)
+            .await?;
+        (ors, orc, ovs, ovc)
+    } else {
+        (0, 0, 0, 0)
+    };
+    let load = ride_seats + visitor_seats + other_ride_seats + other_vis_seats;
+    let total_bookings = ride_cnt + visitor_cnt + other_ride_cnt + other_vis_cnt;
+    if load + seats > cap || (carpool != 1 && total_bookings > 0) {
         return Err(bad(
             lang,
             ErrorKey::NotEnoughDriverSeatsReassign { load, cap },

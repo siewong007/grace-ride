@@ -667,6 +667,7 @@ private fun PaySheet(
     onDismiss: () -> Unit,
     onConfirm: (Boolean, String) -> Unit,
 ) {
+    SecureScreenEffect()
     val context = LocalContext.current
     val view = LocalView.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

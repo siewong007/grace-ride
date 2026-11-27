@@ -86,6 +86,7 @@ fun VisitScreen(
     token: String,
     onBack: () -> Unit,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: VisitViewModel = viewModel(
         key = "visit_$token",
         factory = VisitViewModel.factory(container, token),

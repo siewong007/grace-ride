@@ -643,6 +643,26 @@ async fn create_pass(
         req.notes.as_deref().unwrap_or_default(),
     );
     let mut tx = st.db.begin().await?;
+    let tx_ev_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if tx_ev_status.as_deref() != Some("published") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if !organiser {
+        let still_going: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM event_signups WHERE event_id=$1 AND user_id=$2 AND status='going' FOR SHARE",
+        )
+        .bind(event_id)
+        .bind(u.id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if still_going.is_none() {
+            return Err(forbidden(u.lang, ErrorKey::OnlyGoingCanInviteVisitor));
+        }
+    }
     let (ride_id,): (i64,) = sqlx::query_as(
         "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes,
                             is_proxy, rider_name, rider_phone, rider_relationship, created_at, updated_at, as_group_id)

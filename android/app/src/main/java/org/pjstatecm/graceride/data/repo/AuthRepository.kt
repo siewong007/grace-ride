@@ -120,7 +120,10 @@ class AuthRepository(
         store?.remove(CACHED_ME_AT_KEY)
         store?.remove(HIDE_LOCK_DETAILS_KEY)
         store?.remove(NOTIF_PREFS_KEY)
-        store?.let { OfflineSnapshotStore.clear(it) }
+        store?.let {
+            OfflineSnapshotStore.clear(it)
+            org.pjstatecm.graceride.widget.WidgetSnapshotStore.clearStore(it)
+        }
         biometric?.resetAppUnlocked()
         biometric?.clearPendingOptIn()
         onCleared?.invoke()
@@ -134,7 +137,10 @@ class AuthRepository(
                 if (prevId != null && prevId != m.id) {
                     store?.remove(HIDE_LOCK_DETAILS_KEY)
                     store?.remove(NOTIF_PREFS_KEY)
-                    store?.let { OfflineSnapshotStore.clear(it) }
+                    store?.let {
+            OfflineSnapshotStore.clear(it)
+            org.pjstatecm.graceride.widget.WidgetSnapshotStore.clearStore(it)
+        }
                     biometric?.clearStaleEnrollmentIfOtherUser(m.id)
                     onUserSwitched?.invoke(prevId)
                 }
@@ -184,7 +190,10 @@ class AuthRepository(
             return
         }
         lockedMe?.let(::cacheMe)
-        store?.let { OfflineSnapshotStore.clear(it) }
+        store?.let {
+            OfflineSnapshotStore.clear(it)
+            org.pjstatecm.graceride.widget.WidgetSnapshotStore.clearStore(it)
+        }
         onLockedCallback?.invoke()
         _state.value = AuthState.Locked(lockedMe)
     }

@@ -792,7 +792,10 @@ async fn deliver_one(
                         .await;
                         mark_delivery_terminal(db, row.id, next_attempt, "delivered", "").await;
                     } else if status == 403 || status == 400 {
-                        let body_txt = res.text().await.unwrap_or_default();
+                        let body_bytes = crate::util::read_response_bytes_bounded(res, 64 * 1024)
+                            .await
+                            .unwrap_or_default();
+                        let body_txt = String::from_utf8_lossy(&body_bytes);
                         let blocked = status == 403
                             || body_txt.contains("chat not found")
                             || body_txt.contains("blocked");
@@ -831,7 +834,11 @@ async fn deliver_one(
                             .await;
                         }
                     } else if status == 429 {
-                        let body_json: Value = res.json().await.unwrap_or(Value::Null);
+                        let body_bytes = crate::util::read_response_bytes_bounded(res, 64 * 1024)
+                            .await
+                            .unwrap_or_default();
+                        let body_json: Value =
+                            serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
                         let ra = body_json["parameters"]["retry_after"].as_u64();
                         schedule_retry(db, row.id, next_attempt, "telegram 429", ra).await;
                     } else if status >= 500 {
@@ -1023,15 +1030,17 @@ async fn schedule_retry(
         return;
     }
     let next_at = next_backoff_ts(attempts, retry_after_secs);
+    let expected_attempts = attempts.saturating_sub(1);
     let _ = sqlx::query(
         "UPDATE notification_deliveries
          SET status='retry', attempts=$2, next_attempt_at=$3, last_error=$4
-         WHERE id=$1",
+         WHERE id=$1 AND status IN ('pending', 'retry') AND attempts=$5",
     )
     .bind(id)
     .bind(attempts)
     .bind(next_at)
     .bind(err_short)
+    .bind(expected_attempts)
     .execute(db)
     .await;
 }
@@ -1039,16 +1048,18 @@ async fn schedule_retry(
 async fn mark_delivery_terminal(db: &PgPool, id: i64, attempts: i64, status: &str, err: &str) {
     let delivered_at = (status == "delivered").then(now);
     let err_short: String = err.chars().take(240).collect();
+    let expected_attempts = attempts.saturating_sub(1);
     let _ = sqlx::query(
         "UPDATE notification_deliveries
          SET status=$2, attempts=$3, last_error=$4, delivered_at=$5
-         WHERE id=$1",
+         WHERE id=$1 AND status IN ('pending', 'retry') AND attempts=$6",
     )
     .bind(id)
     .bind(status)
     .bind(attempts)
     .bind(err_short)
     .bind(delivered_at)
+    .bind(expected_attempts)
     .execute(db)
     .await;
 }

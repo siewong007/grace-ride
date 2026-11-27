@@ -7,9 +7,15 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Command;
 
-use axum::http::{header::HeaderName, HeaderMap, HeaderValue, Method, StatusCode};
+use axum::body::Body;
+use axum::http::{header, header::HeaderName, HeaderMap, HeaderValue, Method, Request, StatusCode};
+use base64::Engine as _;
 use common::*;
+use http_body_util::BodyExt;
+use ring::rand::SystemRandom;
+use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
 use serde_json::json;
+use tower::ServiceExt;
 
 async fn user_id(st: &grace_ride::state::AppState, email: &str) -> i64 {
     sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
@@ -1083,4 +1089,1129 @@ async fn m02_m03_m04_m05_m08_m14_m15_and_backup_hardening() {
         stderr.contains("REQUIRE_ENCRYPTION=true"),
         "expected encryption-required stderr, got: {stderr}"
     );
+}
+
+async fn insert_all_audience_event(
+    st: &grace_ride::state::AppState,
+    created_by: i64,
+    title: &str,
+    status: &str,
+    mileage_claimable: i64,
+) -> i64 {
+    let ev = insert_event(st, created_by, title, status, mileage_claimable).await;
+    sqlx::query(
+        "INSERT INTO event_groups (event_id, group_id)
+         SELECT $1, id FROM groups WHERE is_all = 1
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(ev)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    ev
+}
+
+#[tokio::test]
+async fn pass2_rbac_recovery_dual_control_and_vp_president_ack() {
+    let (app, st) = setup().await;
+    let president = login(&st, "president@example.org").await;
+    let vp = login(&st, "vicepresident@example.org").await;
+    let pres_id = user_id(&st, "president@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+    let sophie_id = user_id(&st, "sophie@example.org").await;
+
+    // 1. President creates two unprivileged custom roles: one for recovery guard, one for VP ack guard.
+    let cr1 = call(
+        &app,
+        Method::POST,
+        "/api/admin/roles",
+        Some(&president),
+        Some(json!({
+            "name": "Recovery Guard Role",
+            "description": "Unprivileged",
+            "permissions": ["rides.view"]
+        })),
+    )
+    .await;
+    assert_eq!(cr1.status, StatusCode::OK, "{}", cr1.json);
+    let key1 = cr1.json["key"].as_str().unwrap().to_string();
+
+    let cr2 = call(
+        &app,
+        Method::POST,
+        "/api/admin/roles",
+        Some(&president),
+        Some(json!({
+            "name": "VP Ack Role",
+            "description": "Unprivileged",
+            "permissions": ["rides.view"]
+        })),
+    )
+    .await;
+    assert_eq!(cr2.status, StatusCode::OK, "{}", cr2.json);
+    let key2 = cr2.json["key"].as_str().unwrap().to_string();
+
+    let assign1 = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{member_id}"),
+        Some(&president),
+        Some(json!({ "roles": [key1], "status": "active" })),
+    )
+    .await;
+    assert_eq!(assign1.status, StatusCode::OK, "{}", assign1.json);
+
+    let assign2 = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{sophie_id}"),
+        Some(&president),
+        Some(json!({ "roles": [key2], "status": "active" })),
+    )
+    .await;
+    assert_eq!(assign2.status, StatusCode::OK, "{}", assign2.json);
+
+    // Simulate President having completed recovery for `member_id` within the past 72h.
+    let tok_hash = grace_ride::auth::hash_token(&uuid::Uuid::new_v4().simple().to_string());
+    sqlx::query(
+        "INSERT INTO invites (token, email, roles, created_by, user_id, kind, expires_at, used_at)
+         VALUES ($1, 'member@example.org', 'member', $2, $3, 'recovery', $4, $5)",
+    )
+    .bind(tok_hash)
+    .bind(pres_id)
+    .bind(member_id)
+    .bind(tomorrow("23:59"))
+    .bind(grace_ride::util::now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    // President cannot bypass dual-control by upgrading `key1` to privileged permissions.
+    let bypass = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/roles/{key1}"),
+        Some(&president),
+        Some(json!({
+            "name": "Recovery Guard Role",
+            "description": "Upgraded",
+            "permissions": ["rides.view", "admin_rides.view"]
+        })),
+    )
+    .await;
+    assert_eq!(bypass.status, StatusCode::FORBIDDEN, "{}", bypass.json);
+    assert_eq!(bypass.json["code"], "SECOND_ADMIN_REQUIRED");
+
+    // 2. Vice-President adding admin power to a role held by non-admin requires president_acknowledged.
+    let vp_no_ack = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/roles/{key2}"),
+        Some(&vp),
+        Some(json!({
+            "name": "VP Ack Role",
+            "description": "With admin power",
+            "permissions": ["rides.view", "admin_roles.update"]
+        })),
+    )
+    .await;
+    assert_eq!(
+        vp_no_ack.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        vp_no_ack.json
+    );
+    assert_eq!(vp_no_ack.json["code"], "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED");
+
+    let vp_with_ack = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/roles/{key2}"),
+        Some(&vp),
+        Some(json!({
+            "name": "VP Ack Role",
+            "description": "With admin power",
+            "permissions": ["rides.view", "admin_roles.update"],
+            "president_acknowledged": true
+        })),
+    )
+    .await;
+    assert_eq!(vp_with_ack.status, StatusCode::OK, "{}", vp_with_ack.json);
+}
+
+#[tokio::test]
+async fn pass2_google_reset_prompt_and_biometric_reauth_session_binding() {
+    // 1. Google password reset uses prompt=login and max_age=0.
+    let cfg = grace_ride::google_oauth::GoogleOAuthConfig {
+        client_id: Some("cid-test".into()),
+        client_secret: Some("csec-test".into()),
+        ..Default::default()
+    };
+    let oauth = grace_ride::google_oauth::GoogleOAuthClient::new(cfg, "https://graceride.test");
+    let reset_url = oauth
+        .authorization_url_with_prompt(
+            "state-rst",
+            "verifier-0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+            None,
+            "login",
+            Some(0),
+        )
+        .unwrap();
+    let parsed = url::Url::parse(&reset_url).unwrap();
+    let params: std::collections::HashMap<String, String> =
+        parsed.query_pairs().into_owned().collect();
+    assert_eq!(params.get("prompt").map(String::as_str), Some("login"));
+    assert_eq!(params.get("max_age").map(String::as_str), Some("0"));
+
+    let login_url = oauth
+        .authorization_url(
+            "state-log",
+            "verifier-0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+            None,
+        )
+        .unwrap();
+    let parsed_login = url::Url::parse(&login_url).unwrap();
+    let login_params: std::collections::HashMap<String, String> =
+        parsed_login.query_pairs().into_owned().collect();
+    assert_eq!(
+        login_params.get("prompt").map(String::as_str),
+        Some("select_account")
+    );
+    assert!(!login_params.contains_key("max_age"));
+
+    // 2. Biometric reauth challenge is strictly bound to the originating session.
+    let (app, st) = setup().await;
+    let cookie_a = login(&st, "member@example.org").await;
+    let cookie_b = login(&st, "member@example.org").await;
+
+    let rng = SystemRandom::new();
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+    let pair =
+        EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref(), &rng).unwrap();
+    let spki_prefix: [u8; 26] = [
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+    ];
+    let mut spki = Vec::with_capacity(91);
+    spki.extend_from_slice(&spki_prefix);
+    spki.extend_from_slice(pair.public_key().as_ref());
+    let spki_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(spki);
+
+    let reg_start = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/register/start",
+        Some(&cookie_a),
+        None,
+    )
+    .await;
+    assert_eq!(reg_start.status, StatusCode::OK, "{}", reg_start.json);
+    let reg_ch = reg_start.json["challenge"].as_str().unwrap();
+    let reg_sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        pair.sign(
+            &rng,
+            format!("graceride-biometric-v1:register:{reg_ch}").as_bytes(),
+        )
+        .unwrap()
+        .as_ref(),
+    );
+    let reg_finish = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/register/finish",
+        Some(&cookie_a),
+        Some(json!({
+            "challenge_id": reg_start.json["challenge_id"],
+            "public_key": spki_b64,
+            "signature": reg_sig,
+            "label": "Pass2 Key",
+        })),
+    )
+    .await;
+    assert_eq!(reg_finish.status, StatusCode::OK, "{}", reg_finish.json);
+    let cookie_a = cookie_from(&reg_finish).expect("rotated biometric cookie");
+    let cred_id = reg_finish.json["credential_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let reauth_start = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/reauth/start",
+        Some(&cookie_a),
+        Some(json!({ "credential_id": cred_id })),
+    )
+    .await;
+    assert_eq!(reauth_start.status, StatusCode::OK, "{}", reauth_start.json);
+    let reauth_ch = reauth_start.json["challenge"].as_str().unwrap();
+    let reauth_sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        pair.sign(
+            &rng,
+            format!("graceride-biometric-v1:reauth:{reauth_ch}").as_bytes(),
+        )
+        .unwrap()
+        .as_ref(),
+    );
+
+    let cross_session = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/reauth/finish",
+        Some(&cookie_b),
+        Some(json!({
+            "challenge_id": reauth_start.json["challenge_id"],
+            "credential_id": cred_id,
+            "signature": reauth_sig,
+        })),
+    )
+    .await;
+    assert_eq!(
+        cross_session.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        cross_session.json
+    );
+    assert_eq!(cross_session.json["code"], "CHALLENGE_MISMATCH");
+
+    let reauth_start2 = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/reauth/start",
+        Some(&cookie_a),
+        Some(json!({ "credential_id": cred_id })),
+    )
+    .await;
+    let reauth_ch2 = reauth_start2.json["challenge"].as_str().unwrap();
+    let reauth_sig2 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        pair.sign(
+            &rng,
+            format!("graceride-biometric-v1:reauth:{reauth_ch2}").as_bytes(),
+        )
+        .unwrap()
+        .as_ref(),
+    );
+    let same_session = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/reauth/finish",
+        Some(&cookie_a),
+        Some(json!({
+            "challenge_id": reauth_start2.json["challenge_id"],
+            "credential_id": cred_id,
+            "signature": reauth_sig2,
+        })),
+    )
+    .await;
+    assert_eq!(same_session.status, StatusCode::OK, "{}", same_session.json);
+}
+
+#[tokio::test]
+async fn pass2_visitor_carpool_and_driver_capacity_reduction_guards() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let head = login(&st, "traffichead@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+
+    let admin_id = user_id(&st, "admin@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+    let driver_id = user_id(&st, "driver@example.org").await;
+    let area = first_area_id(&st).await;
+
+    ensure_driver_vehicle(&st, driver_id, "WXX1122").await;
+    sqlx::query(
+        "INSERT INTO driver_areas (user_id, area_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(driver_id)
+    .bind(area)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    // Turn off carpool first, create an active booking on a published event.
+    let prof_off = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "carpool_enabled": false,
+            "spare_seats": 3,
+            "area_ids": [area]
+        })),
+    )
+    .await;
+    assert_eq!(prof_off.status, StatusCode::OK, "{}", prof_off.json);
+
+    let ev =
+        insert_all_audience_event(&st, admin_id, "Carpool Visitor Event", "published", 1).await;
+    signup_going(&st, ev, member_id).await;
+    signup_going(&st, ev, driver_id).await;
+
+    let ride_res = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&member),
+        Some(json!({
+            "event_id": ev,
+            "leg": "outbound",
+            "pickup_at": tomorrow("09:00"),
+            "pickup_area_id": area,
+            "pickup_address": "10 SS2",
+            "destination": "Church",
+            "seats": 2
+        })),
+    )
+    .await;
+    assert_eq!(ride_res.status, StatusCode::OK, "{}", ride_res.json);
+    let ride_id = ride_res.json["id"].as_i64().unwrap();
+
+    let claim = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/claim"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(claim.status, StatusCode::OK, "{}", claim.json);
+
+    // Assigning a visitor to a carpool_enabled=0 driver who already has a ride booking must fail.
+    let bad_vis = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{ev}/plan/visitors"),
+        Some(&head),
+        Some(json!({
+            "name": "Visitor One",
+            "phone": "0123334444",
+            "area_id": area,
+            "pickup_address": "12 SS2",
+            "seats": 1,
+            "leg": "outbound",
+            "driver_id": driver_id
+        })),
+    )
+    .await;
+    assert_ne!(bad_vis.status, StatusCode::OK, "{}", bad_vis.json);
+
+    // Re-enable carpool=1, approve ride (so 2 active seats are loaded on driver).
+    let prof_on = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "carpool_enabled": true,
+            "spare_seats": 3,
+            "area_ids": [area]
+        })),
+    )
+    .await;
+    assert_eq!(prof_on.status, StatusCode::OK, "{}", prof_on.json);
+    let accept_ride = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/respond"),
+        Some(&member),
+        Some(json!({ "accept": true })),
+    )
+    .await;
+    assert_eq!(accept_ride.status, StatusCode::OK, "{}", accept_ride.json);
+    let approve = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/approve"),
+        Some(&head),
+        None,
+    )
+    .await;
+    assert_eq!(approve.status, StatusCode::OK, "{}", approve.json);
+
+    // Reducing spare_seats below active load (2 -> 1) must be rejected.
+    let shrink_profile = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "carpool_enabled": true,
+            "spare_seats": 1,
+            "area_ids": [area]
+        })),
+    )
+    .await;
+    assert_eq!(
+        shrink_profile.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        shrink_profile.json
+    );
+    assert_eq!(shrink_profile.json["code"], "NOT_ENOUGH_DRIVER_SEATS");
+
+    // Selecting a tiny vehicle whose max spare capacity (seats - 1 = 1) < active load (2) must fail.
+    let small_v = call(
+        &app,
+        Method::POST,
+        "/api/driver/vehicles",
+        Some(&driver),
+        Some(json!({
+            "model": "Smart Two",
+            "color": "Red",
+            "plate": "SM2026",
+            "seats": 2,
+            "vehicle_type": "standard"
+        })),
+    )
+    .await;
+    assert_eq!(small_v.status, StatusCode::OK, "{}", small_v.json);
+    let small_vid = small_v.json["id"].as_i64().unwrap();
+    let sel_small = call(
+        &app,
+        Method::POST,
+        &format!("/api/driver/vehicles/{small_vid}/select"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(
+        sel_small.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        sel_small.json
+    );
+    assert_eq!(sel_small.json["code"], "NOT_ENOUGH_DRIVER_SEATS");
+
+    // Remove any seeded spare larger vehicles so ONLY active vehicle and small SM2026 exist.
+    let active_vid: i64 =
+        sqlx::query_scalar("SELECT id FROM vehicles WHERE user_id = $1 AND is_active = 1")
+            .bind(driver_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    sqlx::query("DELETE FROM vehicles WHERE user_id = $1 AND id <> $2 AND id <> $3")
+        .bind(driver_id)
+        .bind(active_vid)
+        .bind(small_vid)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    // Deleting the active vehicle while only smaller vehicle SM2026 remains must fail.
+    let del_active = call(
+        &app,
+        Method::DELETE,
+        &format!("/api/driver/vehicles/{active_vid}"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(
+        del_active.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        del_active.json
+    );
+
+    let _ = admin;
+}
+
+#[tokio::test]
+async fn pass2_cancelled_event_guards_overpayment_finance_and_fare_transfer() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let head = login(&st, "traffichead@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let sophie = login(&st, "sophie@example.org").await;
+    let _driver = login(&st, "driver@example.org").await;
+    let finance = login(&st, "finance@example.org").await;
+
+    let admin_id = user_id(&st, "admin@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+    let sophie_id = user_id(&st, "sophie@example.org").await;
+    let driver_id = user_id(&st, "driver@example.org").await;
+    let area = first_area_id(&st).await;
+
+    ensure_driver_vehicle(&st, driver_id, "FARE100").await;
+
+    // 1. Settlement downward revision preserves paid_cents and exposes overpaid_cents in finance report.
+    let ev = insert_all_audience_event(&st, admin_id, "Badminton Settlement", "published", 1).await;
+    signup_going(&st, ev, member_id).await;
+    signup_going(&st, ev, sophie_id).await;
+    signup_going(&st, ev, driver_id).await;
+    sqlx::query("UPDATE event_signups SET attended = 1 WHERE event_id = $1")
+        .bind(ev)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    let settle_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{ev}/settlements"),
+        Some(&admin),
+        Some(json!({
+            "title": "Hall Split",
+            "items": [{"label": "Court", "amount_cents": 2000}],
+            "subsidy_cents": 0,
+            "split_mode": "equal",
+            "participants": [{"user_id": member_id}, {"user_id": sophie_id}],
+            "payee_name": "Organiser",
+            "payee_account": "012-3456789"
+        })),
+    )
+    .await;
+    assert_eq!(settle_res.status, StatusCode::OK, "{}", settle_res.json);
+    let sid = settle_res.json["id"].as_i64().unwrap();
+    let pub_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/settlements/{sid}/publish"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(pub_res.status, StatusCode::OK, "{}", pub_res.json);
+
+    let proof_file = upload_png(&app, &member).await;
+    let member_share_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM settlement_shares WHERE settlement_id = $1 AND user_id = $2",
+    )
+    .bind(sid)
+    .bind(member_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    let proof_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/shares/{member_share_id}/proof"),
+        Some(&member),
+        Some(json!({ "proof_file_id": proof_file, "txn_ref": "PASS2-OVERPAY-1" })),
+    )
+    .await;
+    assert_eq!(proof_res.status, StatusCode::OK, "{}", proof_res.json);
+    let ver_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/shares/{member_share_id}/verify"),
+        Some(&admin),
+        Some(json!({ "action": "confirm" })),
+    )
+    .await;
+    assert_eq!(ver_res.status, StatusCode::OK, "{}", ver_res.json);
+
+    // Revise court fee down from 2000 -> 1000 (member's share drops 1000 -> 500, paid_cents stays 1000).
+    let rev_res = call(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&admin),
+        Some(json!({
+            "title": "Hall Split Revised",
+            "items": [{"label": "Court", "amount_cents": 1000}],
+            "subsidy_cents": 0,
+            "split_mode": "equal",
+            "participants": [{"user_id": member_id}, {"user_id": sophie_id}],
+            "payee_name": "Organiser",
+            "payee_account": "012-3456789",
+            "reason": "Discount received"
+        })),
+    )
+    .await;
+    assert_eq!(rev_res.status, StatusCode::OK, "{}", rev_res.json);
+
+    let my_shares = call(&app, Method::GET, "/api/me/shares", Some(&member), None).await;
+    assert_eq!(my_shares.status, StatusCode::OK, "{}", my_shares.json);
+    let mine = my_shares
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == member_share_id)
+        .unwrap();
+    assert_eq!(mine["paid_cents"], 1000);
+
+    let ev_day = tomorrow("09:00")[..10].to_string();
+    let fin_before = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/reports/finance?from={ev_day}&to={ev_day}"),
+        Some(&finance),
+        None,
+    )
+    .await;
+    assert_eq!(fin_before.status, StatusCode::OK, "{}", fin_before.json);
+    assert!(
+        fin_before.json["bills"]["totals"]["paid_cents"]
+            .as_i64()
+            .unwrap()
+            >= 1000,
+        "{}",
+        fin_before.json
+    );
+    assert!(
+        fin_before.json["bills"]["totals"]["overpaid_cents"]
+            .as_i64()
+            .unwrap()
+            >= 500,
+        "{}",
+        fin_before.json
+    );
+
+    // 2. Create pending ride & unbatched post-event mileage claim, then cancel event.
+    let pending_ride = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&sophie),
+        Some(json!({
+            "event_id": ev,
+            "leg": "outbound",
+            "pickup_at": tomorrow("09:00"),
+            "pickup_area_id": area,
+            "pickup_address": "22 SS2",
+            "destination": "Church",
+            "seats": 1
+        })),
+    )
+    .await;
+    assert_eq!(pending_ride.status, StatusCode::OK, "{}", pending_ride.json);
+    let prid = pending_ride.json["id"].as_i64().unwrap();
+    sqlx::query("UPDATE rides SET driver_id = $1, status = 'pending_passenger' WHERE id = $2")
+        .bind(driver_id)
+        .bind(prid)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO reimbursements (user_id, event_id, destination_area_id, trip_type, amount_cents, description, status, kind, created_at, updated_at)
+         VALUES ($1, $2, $3, 'standard', 1200, 'Cancelled event mileage', 'approved', 'mileage', $4, $4)",
+    )
+    .bind(driver_id)
+    .bind(ev)
+    .bind(area)
+    .bind(grace_ride::util::now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let reimb_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM reimbursements WHERE event_id = $1 AND kind = 'mileage'",
+    )
+    .bind(ev)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let cancel_ev = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{ev}/cancel"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(cancel_ev.status, StatusCode::OK, "{}", cancel_ev.json);
+
+    // Unpaid unbatched mileage claim was automatically rejected upon event cancellation.
+    let claim_status: String =
+        sqlx::query_scalar("SELECT status FROM reimbursements WHERE id = $1")
+            .bind(reimb_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(claim_status, "rejected");
+
+    // Approving a pending claim or paying/batching an approved claim on a cancelled event must fail.
+    let pend_reimb_id: i64 = sqlx::query_scalar(
+        "INSERT INTO reimbursements (user_id, event_id, destination_area_id, trip_type, amount_cents, description, status, kind, created_at, updated_at)
+         VALUES ($1, $2, $3, 'standard', 1200, 'Pending on cancelled', 'pending', 'mileage', $4, $4) RETURNING id",
+    )
+    .bind(member_id)
+    .bind(ev)
+    .bind(area)
+    .bind(grace_ride::util::now())
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    // Duplicate live post-event mileage claim for same (event, user) must be blocked by 0019 unique index.
+    let dup_post_mileage = sqlx::query(
+        "INSERT INTO reimbursements (user_id, event_id, destination_area_id, trip_type, amount_cents, description, status, kind, created_at, updated_at)
+         VALUES ($1, $2, $3, 'standard', 1200, 'Dup post mileage', 'approved', 'mileage', $4, $4)",
+    )
+    .bind(member_id)
+    .bind(ev)
+    .bind(area)
+    .bind(grace_ride::util::now())
+    .execute(&st.db)
+    .await;
+    assert!(
+        dup_post_mileage.is_err(),
+        "uq_reimbursements_post_event_mileage must reject duplicate"
+    );
+
+    let app_reimb_id: i64 = sqlx::query_scalar(
+        "INSERT INTO reimbursements (user_id, event_id, destination_area_id, trip_type, amount_cents, description, status, kind, created_at, updated_at)
+         VALUES ($1, $2, $3, 'standard', 1200, 'Approved on cancelled', 'approved', 'mileage', $4, $4) RETURNING id",
+    )
+    .bind(sophie_id)
+    .bind(ev)
+    .bind(area)
+    .bind(grace_ride::util::now())
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    let bad_rev = call(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{pend_reimb_id}/review"),
+        Some(&head),
+        Some(json!({ "action": "approve", "note": "" })),
+    )
+    .await;
+    assert_eq!(bad_rev.status, StatusCode::BAD_REQUEST, "{}", bad_rev.json);
+    let bad_pay = call(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{app_reimb_id}/pay"),
+        Some(&finance),
+        Some(json!({ "payee_verified": true, "paid_ref": "CAN-1" })),
+    )
+    .await;
+    assert_eq!(bad_pay.status, StatusCode::BAD_REQUEST, "{}", bad_pay.json);
+    let bad_batch = call(
+        &app,
+        Method::POST,
+        "/api/reimbursements/batches",
+        Some(&finance),
+        Some(json!({ "claim_ids": [app_reimb_id] })),
+    )
+    .await;
+    assert_eq!(
+        bad_batch.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        bad_batch.json
+    );
+
+    // Cancelled event rejects new settlements, visitor passes, passenger accept, and finance stats exclude it.
+    let bad_settle = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{ev}/settlements"),
+        Some(&admin),
+        Some(json!({
+            "title": "Blocked",
+            "items": [{"label": "Court", "amount_cents": 500}],
+            "subsidy_cents": 0,
+            "split_mode": "equal",
+            "participants": [{"user_id": member_id}],
+            "payee_name": "Organiser",
+            "payee_account": "012-3456789"
+        })),
+    )
+    .await;
+    assert_eq!(
+        bad_settle.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        bad_settle.json
+    );
+
+    let bad_vis = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{ev}/visitors"),
+        Some(&member),
+        Some(json!({
+            "name": "Late Guest",
+            "phone": "0129998888",
+            "pickup_at": tomorrow("09:00"),
+            "pickup_area_id": area,
+            "pickup_address": "1 SS2"
+        })),
+    )
+    .await;
+    assert_eq!(bad_vis.status, StatusCode::BAD_REQUEST, "{}", bad_vis.json);
+
+    sqlx::query("UPDATE rides SET status = 'pending_passenger' WHERE id = $1")
+        .bind(prid)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let bad_accept = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{prid}/respond"),
+        Some(&sophie),
+        Some(json!({ "accept": true })),
+    )
+    .await;
+    assert_eq!(
+        bad_accept.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        bad_accept.json
+    );
+
+    let fin_after = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/reports/finance?from={ev_day}&to={ev_day}"),
+        Some(&finance),
+        None,
+    )
+    .await;
+    let listed = fin_after.json["bills"]["settlements"].as_array().unwrap();
+    assert!(
+        !listed.iter().any(|s| s["event_id"] == ev),
+        "cancelled event settlement must be excluded from finance report"
+    );
+
+    // 3. Excluding a completed carpool ride transfers fare to eligible sibling completed ride on same trip.
+    let ev2 = insert_all_audience_event(&st, admin_id, "Transfer Fare Event", "published", 1).await;
+    let trip_id: i64 = 90_099;
+    sqlx::query("INSERT INTO trips (id) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(trip_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let r1: i64 = sqlx::query_scalar(
+        "INSERT INTO rides (passenger_id, driver_id, event_id, trip_id, leg, pickup_at, pickup_area_id, pickup_address, destination, seats, status, reimbursement_amount_cents, reimbursement_excluded)
+         VALUES ($1, $2, $3, $4, 'outbound', $5, $6, 'A1', 'Hall', 1, 'completed', 1500, 0) RETURNING id",
+    )
+    .bind(member_id)
+    .bind(driver_id)
+    .bind(ev2)
+    .bind(trip_id)
+    .bind(tomorrow("09:00"))
+    .bind(area)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    let r2: i64 = sqlx::query_scalar(
+        "INSERT INTO rides (passenger_id, driver_id, event_id, trip_id, leg, pickup_at, pickup_area_id, pickup_address, destination, seats, status, reimbursement_amount_cents, reimbursement_excluded)
+         VALUES ($1, $2, $3, $4, 'outbound', $5, $6, 'A2', 'Hall', 1, 'completed', 0, 0) RETURNING id",
+    )
+    .bind(sophie_id)
+    .bind(driver_id)
+    .bind(ev2)
+    .bind(trip_id)
+    .bind(tomorrow("09:00"))
+    .bind(area)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let excl_res = call(
+        &app,
+        Method::PUT,
+        &format!("/api/rides/{r1}/reimbursement-excluded"),
+        Some(&head),
+        Some(json!({ "excluded": true })),
+    )
+    .await;
+    assert_eq!(excl_res.status, StatusCode::OK, "{}", excl_res.json);
+    let amounts: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT id, reimbursement_excluded, reimbursement_amount_cents FROM rides WHERE id IN ($1, $2) ORDER BY id",
+    )
+    .bind(r1)
+    .bind(r2)
+    .fetch_all(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(amounts, vec![(r1, 1, 0), (r2, 0, 1500)]);
+}
+
+#[tokio::test]
+async fn pass2_proxy_case_caregiver_files_robots_sse_and_bounded_http() {
+    use tokio::io::AsyncWriteExt;
+
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let sophie = login(&st, "sophie@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+    let sophie_id = user_id(&st, "sophie@example.org").await;
+    let area = first_area_id(&st).await;
+
+    // 1. Proxy rider case/whitespace duplicate conflict & case-insensitive caregiver care link access.
+    let p1 = call(
+        &app,
+        Method::POST,
+        "/api/proxy-riders",
+        Some(&member),
+        Some(json!({ "name": "Alice Tan", "caregiver_user_id": sophie_id })),
+    )
+    .await;
+    assert_eq!(p1.status, StatusCode::OK, "{}", p1.json);
+
+    let p_dup = call(
+        &app,
+        Method::POST,
+        "/api/proxy-riders",
+        Some(&member),
+        Some(json!({ "name": "  alice tan  " })),
+    )
+    .await;
+    assert_eq!(p_dup.status, StatusCode::CONFLICT, "{}", p_dup.json);
+
+    let ev = insert_all_audience_event(
+        &st,
+        user_id(&st, "admin@example.org").await,
+        "Care Ev",
+        "published",
+        0,
+    )
+    .await;
+    signup_going(&st, ev, member_id).await;
+    let pr = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&member),
+        Some(json!({
+            "event_id": ev,
+            "leg": "outbound",
+            "pickup_at": &grace_ride::util::in_hours(1)[..16],
+            "pickup_area_id": area,
+            "pickup_address": "18 SS2",
+            "destination": "Church",
+            "seats": 1,
+            "is_proxy": true,
+            "rider_name": "  ALICE TAN  "
+        })),
+    )
+    .await;
+    assert_eq!(pr.status, StatusCode::OK, "{}", pr.json);
+    let prid = pr.json["id"].as_i64().unwrap();
+    let cg_ok = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{prid}/care-link"),
+        Some(&sophie),
+        None,
+    )
+    .await;
+    assert_eq!(cg_ok.status, StatusCode::OK, "{}", cg_ok.json);
+    let care_url = cg_ok.json["url"].as_str().unwrap();
+    let care_tok = care_url.rsplit('/').next().unwrap();
+    let cg_view = call(
+        &app,
+        Method::GET,
+        &format!("/api/care/{care_tok}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(cg_view.status, StatusCode::OK, "{}", cg_view.json);
+
+    // 2. Reject malformed JPEG and malformed IHDR PNG; serve file CSP frame-ancestors 'none' & X-Robots-Tag.
+    let upload_raw = |bytes: Vec<u8>, fname: &'static str, ct: &'static str| {
+        let app = app.clone();
+        let cookie = member.clone();
+        async move {
+            let boundary = "XgrPASS2FILE";
+            let mut body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{fname}\"\r\nContent-Type: {ct}\r\n\r\n"
+            )
+            .into_bytes();
+            body.extend_from_slice(&bytes);
+            body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/api/files")
+                .header(header::COOKIE, cookie)
+                .header(header::ORIGIN, ORIGIN)
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap();
+            app.oneshot(req).await.unwrap()
+        }
+    };
+    let bad_jpg = upload_raw(vec![0xFF, 0xD8, 0xFF, 0xE1, 0xFF], "bad.jpg", "image/jpeg").await;
+    assert_eq!(bad_jpg.status(), StatusCode::BAD_REQUEST);
+
+    let mut bad_ihdr_png = b"\x89PNG\r\n\x1a\n".to_vec();
+    bad_ihdr_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R', 1, 2, 3]);
+    let bad_png = upload_raw(bad_ihdr_png, "bad.png", "image/png").await;
+    assert_eq!(bad_png.status(), StatusCode::BAD_REQUEST);
+
+    let good_id = upload_png(&app, &member).await;
+    let file_res = call(
+        &app,
+        Method::GET,
+        &format!("/api/files/{good_id}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(file_res.status, StatusCode::OK);
+    let csp = file_res.headers["content-security-policy"]
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert_eq!(
+        file_res.headers["x-robots-tag"].to_str().unwrap(),
+        "noindex, nofollow, noarchive"
+    );
+
+    // 3. session_alive fails closed on closed pool + immediate SSE revocation via revoke_session/revoke_user.
+    let raw_tok = member.strip_prefix("gr_session=").unwrap();
+    let sess_hash = grace_ride::auth::hash_token(raw_tok);
+    let sse_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/stream")
+        .header(header::COOKIE, &member)
+        .body(Body::empty())
+        .unwrap();
+    let sse_res = app.clone().oneshot(sse_req).await.unwrap();
+    assert_eq!(sse_res.status(), StatusCode::OK);
+    grace_ride::stream::revoke_session(&sess_hash);
+    let drained = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sse_res.into_body().collect(),
+    )
+    .await
+    .expect("SSE stream must close promptly upon revoke_session");
+    assert!(drained.is_ok());
+
+    // Bounded HTTP reader enforces max_bytes over real HTTP socket.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let srv = tokio::spawn(async move {
+        if let Ok((mut sock, _)) = listener.accept().await {
+            let mut req_buf = [0u8; 512];
+            let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut req_buf).await;
+            let body = "X".repeat(2048);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+    let client = reqwest::Client::new();
+    let http_res = client
+        .get(format!("http://{addr}/big"))
+        .send()
+        .await
+        .unwrap();
+    let err = grace_ride::util::read_response_bytes_bounded(http_res, 512).await;
+    assert!(err.is_err(), "expected bounded read error");
+    srv.await.unwrap();
+
+    // Closed DB pool fails session_alive closed.
+    let closed_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy(&st.cfg.database_url)
+        .unwrap();
+    closed_pool.close().await;
+    assert!(!grace_ride::stream::session_alive(&closed_pool, &sess_hash).await);
 }

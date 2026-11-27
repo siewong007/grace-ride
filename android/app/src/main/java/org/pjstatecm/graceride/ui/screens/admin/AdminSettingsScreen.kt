@@ -677,6 +677,7 @@ private fun AlertsSettingsTab(
     vm: AdminSettingsViewModel,
     onCopy: (String, String) -> Unit,
 ) {
+    SecureScreenEffect()
     val cfg = state.alertSettings
     val view = LocalView.current
     var showTgToken by remember { mutableStateOf(false) }

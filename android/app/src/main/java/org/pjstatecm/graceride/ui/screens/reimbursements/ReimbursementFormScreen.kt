@@ -84,6 +84,7 @@ fun ReimbursementFormScreen(
     nav: NavHostController,
     editId: Long? = null,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: ReimbursementFormViewModel = viewModel(
         key = "reimb-form-${editId ?: "new"}",
         factory = ReimbursementFormViewModel.factory(container, editId),

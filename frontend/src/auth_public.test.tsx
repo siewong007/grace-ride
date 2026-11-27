@@ -166,7 +166,7 @@ describe('Invite passkey step', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /later/i }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent(/no password/i);
+    expect(dialog).toHaveTextContent(/without a passkey, verified google account, or password/i);
 
     // Choosing to set it up keeps the member on the passkey step.
     fireEvent.click(screen.getByRole('button', { name: /^set up passkey$/i }));

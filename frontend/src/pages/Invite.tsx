@@ -4,7 +4,7 @@ import { Check, Copy, ExternalLink, Fingerprint, KeyRound } from 'lucide-react';
 import { api, ApiError, apiMessage, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { clearAutoLock } from '../components/AutoLock';
-import { clearClientSessionStorage } from '../offlineSnapshot';
+import { clearClientSessionStorage, clearPendingLogout } from '../offlineSnapshot';
 import { LogoMark, Wordmark } from '../components/Brand';
 import { SwipeBackGesture } from '../components/BackNavigation';
 import { PublicDisplayBar } from '../components/AppChrome';
@@ -152,6 +152,7 @@ export default function Invite() {
       }
       clearClientSessionStorage();
       clearAutoLock();
+      clearPendingLogout();
       await refresh();
       setStep('passkey');
     });

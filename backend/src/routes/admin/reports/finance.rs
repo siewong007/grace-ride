@@ -369,7 +369,7 @@ pub(in crate::routes::admin) async fn finance_report(
             "SELECT COUNT(*)::BIGINT
              FROM settlements s
              JOIN events e ON e.id = s.event_id
-             WHERE s.status = 'draft' AND e.status <> 'draft'
+             WHERE s.status = 'draft' AND e.status NOT IN ('draft', 'cancelled')
                AND e.starts_at >= $1 AND e.starts_at < $2",
         )
         .bind(&w.start)
@@ -393,6 +393,8 @@ pub(in crate::routes::admin) async fn finance_report(
             pending_verification_cents: i64,
             needs_info_cents: i64,
             unpaid_cents: i64,
+            paid_cents: i64,
+            overpaid_cents: i64,
             participant_count: i64,
             confirmed_count: i64,
         }
@@ -404,7 +406,7 @@ pub(in crate::routes::admin) async fn finance_report(
                 FROM settlements s
                 JOIN events e ON e.id = s.event_id
                 JOIN users u ON u.id = s.created_by
-                WHERE s.status <> 'draft' AND e.status <> 'draft'
+                WHERE s.status <> 'draft' AND e.status NOT IN ('draft', 'cancelled')
                   AND e.starts_at >= $1 AND e.starts_at < $2
              ),
              item_agg AS (
@@ -419,6 +421,8 @@ pub(in crate::routes::admin) async fn finance_report(
                        COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'pending'), 0)::BIGINT AS pending_verification_cents,
                        COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'needs_info'), 0)::BIGINT AS needs_info_cents,
                        COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'unpaid'), 0)::BIGINT AS unpaid_cents,
+                       COALESCE(SUM(sh.paid_cents), 0)::BIGINT AS paid_cents,
+                       COALESCE(SUM(GREATEST(0, sh.paid_cents - sh.amount_cents)), 0)::BIGINT AS overpaid_cents,
                        COUNT(*)::BIGINT AS participant_count,
                        COUNT(*) FILTER (WHERE sh.status = 'confirmed')::BIGINT AS confirmed_count
                 FROM settlement_shares sh
@@ -432,6 +436,8 @@ pub(in crate::routes::admin) async fn finance_report(
                     COALESCE(sa.pending_verification_cents, 0)::BIGINT AS pending_verification_cents,
                     COALESCE(sa.needs_info_cents, 0)::BIGINT AS needs_info_cents,
                     COALESCE(sa.unpaid_cents, 0)::BIGINT AS unpaid_cents,
+                    COALESCE(sa.paid_cents, 0)::BIGINT AS paid_cents,
+                    COALESCE(sa.overpaid_cents, 0)::BIGINT AS overpaid_cents,
                     COALESCE(sa.participant_count, 0)::BIGINT AS participant_count,
                     COALESCE(sa.confirmed_count, 0)::BIGINT AS confirmed_count
              FROM scoped sc
@@ -454,6 +460,8 @@ pub(in crate::routes::admin) async fn finance_report(
         let mut pending_ver_total = 0_i64;
         let mut needs_info_total = 0_i64;
         let mut unpaid_total = 0_i64;
+        let mut paid_total = 0_i64;
+        let mut overpaid_total = 0_i64;
 
         for b in &bill_rows {
             if b.status == "closed" {
@@ -478,6 +486,8 @@ pub(in crate::routes::admin) async fn finance_report(
             pending_ver_total += b.pending_verification_cents;
             needs_info_total += b.needs_info_cents;
             unpaid_total += b.unpaid_cents;
+            paid_total += b.paid_cents;
+            overpaid_total += b.overpaid_cents;
         }
 
         let total_settlements = published_count + closed_count;
@@ -509,6 +519,8 @@ pub(in crate::routes::admin) async fn finance_report(
                     "net_billed_cents": net,
                     "collected_cents": b.collected_cents,
                     "outstanding_cents": outstanding,
+                    "paid_cents": b.paid_cents,
+                    "overpaid_cents": b.overpaid_cents,
                     "participant_count": b.participant_count,
                     "confirmed_count": b.confirmed_count,
                 })
@@ -531,6 +543,8 @@ pub(in crate::routes::admin) async fn finance_report(
                 "pending_verification_cents": pending_ver_total,
                 "needs_info_cents": needs_info_total,
                 "unpaid_cents": unpaid_total,
+                "paid_cents": paid_total,
+                "overpaid_cents": overpaid_total,
                 "collection_rate_pct": collection_rate_pct,
             },
             "settlements": settlements,
@@ -596,7 +610,7 @@ pub(in crate::routes::admin) async fn finance_report(
                            COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS collected_cents
                     FROM settlements s
                     JOIN events e ON e.id = s.event_id
-                    WHERE s.status <> 'draft' AND e.status <> 'draft'
+                    WHERE s.status <> 'draft' AND e.status NOT IN ('draft', 'cancelled')
                       AND e.starts_at >= $1 AND e.starts_at < $2
                 )
                 SELECT COALESCE(SUM(GREATEST(0, gross_cents - subsidy_cents)), 0)::BIGINT,

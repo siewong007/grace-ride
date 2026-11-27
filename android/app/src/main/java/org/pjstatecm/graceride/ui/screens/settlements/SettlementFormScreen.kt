@@ -103,6 +103,7 @@ fun SettlementFormScreen(
     settlementId: Long? = null,
     eventId: Long? = null,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: SettlementFormViewModel = viewModel(
         key = "settle-form-${settlementId ?: "new"}-${eventId ?: 0}",
         factory = SettlementFormViewModel.factory(container, settlementId, eventId),

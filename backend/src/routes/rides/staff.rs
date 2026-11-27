@@ -28,6 +28,16 @@ pub(super) async fn exec_staff_approve_tx(
     r: &RideRow,
 ) -> AppResult<i64> {
     let id = r.id;
+    if let Some(eid) = r.event_id {
+        let ev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(eid)
+                .fetch_optional(&mut **tx)
+                .await?;
+        if ev_status.as_deref() != Some("published") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
+    }
     let d = r
         .driver_id
         .ok_or_else(|| bad(u.lang, ErrorKey::NoDriverYet))?;
@@ -192,6 +202,16 @@ pub(super) async fn exec_staff_reassign_tx(
     driver_id: i64,
 ) -> AppResult<Option<i64>> {
     let id = r.id;
+    if let Some(eid) = r.event_id {
+        let ev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(eid)
+                .fetch_optional(&mut **tx)
+                .await?;
+        if ev_status.as_deref() != Some("published") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
+    }
     let (can_drive,): (bool,) = sqlx::query_as(crate::dyn_sql!(
         "SELECT {} FROM users u WHERE u.id=$1 AND u.status='active'",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
@@ -356,6 +376,16 @@ pub(super) async fn exec_staff_alt_transport_tx(
     reason: Option<&str>,
 ) -> AppResult<String> {
     let id = r.id;
+    if let Some(eid) = r.event_id {
+        let ev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(eid)
+                .fetch_optional(&mut **tx)
+                .await?;
+        if ev_status.as_deref() != Some("published") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
+    }
     let note = reason
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -470,17 +500,35 @@ pub(super) async fn exec_set_reimbursement_excluded_tx(
     r: &RideRow,
     excluded: bool,
 ) -> AppResult<()> {
-    let status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM rides WHERE id=$1 FOR UPDATE")
-            .bind(r.id)
-            .fetch_optional(&mut **tx)
+    if excluded {
+        if let Some(tid) =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT trip_id FROM rides WHERE id=$1")
+                .bind(r.id)
+                .fetch_optional(&mut **tx)
+                .await?
+                .flatten()
+        {
+            sqlx::query(
+                "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_trip_fare', $1))",
+            )
+            .bind(tid)
+            .execute(&mut **tx)
             .await?;
-    let Some(status) = status else {
+        }
+    }
+    let row: Option<(String, Option<i64>, Option<i64>, i64)> = sqlx::query_as(
+        "SELECT status, trip_id, driver_id, reimbursement_amount_cents FROM rides WHERE id=$1 FOR UPDATE",
+    )
+    .bind(r.id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some((status, trip_id, driver_id, reimb_cents)) = row else {
         return Err(conflict(lang, ErrorKey::RideStatusChanged));
     };
     if matches!(status.as_str(), "cancelled" | "no_show" | "alt_transport") {
         return Err(bad(lang, ErrorKey::InvalidAction));
     }
+    let stamp = now();
     if excluded {
         let live_mileage: bool = sqlx::query_scalar(
             "SELECT EXISTS (
@@ -494,17 +542,54 @@ pub(super) async fn exec_set_reimbursement_excluded_tx(
         if live_mileage {
             return Err(conflict(lang, ErrorKey::ReimbursementAlreadyClaimed));
         }
+        if status == "completed" && reimb_cents > 0 {
+            if let (Some(tid), Some(did)) = (trip_id, driver_id) {
+                if let Some(sibling_id) = sqlx::query_scalar::<_, i64>(
+                    "SELECT x.id
+                     FROM rides x
+                     JOIN events e ON e.id = x.event_id
+                     WHERE x.trip_id = $1
+                       AND x.driver_id = $2
+                       AND x.id <> $3
+                       AND x.status = 'completed'
+                       AND x.reimbursement_excluded = 0
+                       AND x.reimbursement_amount_cents = 0
+                       AND e.mileage_claimable = 1
+                     ORDER BY x.id ASC
+                     LIMIT 1
+                     FOR UPDATE OF x",
+                )
+                .bind(tid)
+                .bind(did)
+                .bind(r.id)
+                .fetch_optional(&mut **tx)
+                .await?
+                {
+                    sqlx::query(
+                        "UPDATE rides
+                         SET reimbursement_amount_cents = $1, updated_at = $2
+                         WHERE id = $3",
+                    )
+                    .bind(reimb_cents)
+                    .bind(&stamp)
+                    .bind(sibling_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+        }
     }
     let val: i64 = if excluded { 1 } else { 0 };
     sqlx::query(
         "UPDATE rides
          SET reimbursement_excluded = $1,
              mileage_receipt_needed = CASE WHEN $1 = 1 THEN 0 ELSE mileage_receipt_needed END,
+             reimbursement_amount_cents = CASE WHEN $1 = 1 THEN 0 ELSE reimbursement_amount_cents END,
              updated_at = $2
          WHERE id = $3",
     )
     .bind(val)
-    .bind(now())
+    .bind(&stamp)
     .bind(r.id)
     .execute(&mut **tx)
     .await?;

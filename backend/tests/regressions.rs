@@ -544,17 +544,16 @@ async fn concurrent_reimbursement_reviews_only_update_once() {
     };
     let first = tokio::spawn(review(app1, c1));
     let second = tokio::spawn(review(app2, c2));
-    // Release the row lock only once both reviews are blocked on their UPDATE,
-    // so both have already read status='pending'. A fixed sleep raced on slow
-    // CI runners: one review could finish before the other loaded the row and
-    // then hit the 400 pre-check instead of the 409 conditional-update path.
+    // Release the row lock only once both reviews are blocked on the claim row lock,
+    // so both have already entered review_reimbursement's transaction and serialized on it.
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {
             let waiting: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM pg_stat_activity \
                  WHERE datname = current_database() \
                    AND cardinality(pg_blocking_pids(pid)) > 0 \
-                   AND query LIKE 'UPDATE reimbursements SET status=%'",
+                   AND (query LIKE 'SELECT r.user_id%FROM reimbursements r%FOR UPDATE OF r%' \
+                        OR query LIKE 'UPDATE reimbursements SET status=%')",
             )
             .fetch_one(&st.db)
             .await

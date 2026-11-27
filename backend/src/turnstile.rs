@@ -205,7 +205,14 @@ impl TurnstileVerifier {
             return Err(bad(lang, ErrorKey::TurnstileFailed));
         }
 
-        let parsed: SiteVerifyResponse = match res.json().await {
+        let raw = match crate::util::read_response_bytes_bounded(res, 64 * 1024).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(action = expected_action, error = %e, "turnstile siteverify response read failed");
+                return Err(bad(lang, ErrorKey::TurnstileFailed));
+            }
+        };
+        let parsed: SiteVerifyResponse = match serde_json::from_slice(&raw) {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(action = expected_action, error = %e, "turnstile siteverify invalid json");

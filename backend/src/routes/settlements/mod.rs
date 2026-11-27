@@ -170,25 +170,31 @@ pub(super) fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i
 /// A receipt on a bill must be a file the organiser uploaded themself. Attaching a
 /// file makes it readable through the bill, so someone else's file id is refused
 /// (and an unknown id answers the same way, so ids can't be probed).
-pub(super) async fn check_receipts(
-    st: &AppState,
+/// Locks referenced `files` rows in sorted ID order (`FOR KEY SHARE`) inside the
+/// caller's write transaction so background orphan GC cannot delete them mid-save.
+pub(super) async fn check_receipts_on(
+    conn: &mut sqlx::PgConnection,
     u: &CurrentUser,
     req: &SettlementIn,
 ) -> AppResult<()> {
-    for file_id in req.items.iter().filter_map(|i| i.receipt_file_id) {
-        let owner: Option<(i64,)> = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
-            .bind(file_id)
-            .fetch_optional(&st.db)
-            .await?;
+    let mut receipt_ids: Vec<i64> = req.items.iter().filter_map(|i| i.receipt_file_id).collect();
+    receipt_ids.sort_unstable();
+    receipt_ids.dedup();
+    for file_id in receipt_ids {
+        let owner: Option<(i64,)> =
+            sqlx::query_as("SELECT owner_id FROM files WHERE id=$1 FOR KEY SHARE")
+                .bind(file_id)
+                .fetch_optional(&mut *conn)
+                .await?;
         if owner != Some((u.id,)) {
             return Err(forbidden(u.lang, ErrorKey::InvalidReceipt));
         }
     }
     if let Some(qr_id) = req.payee_qr_file_id {
         let row: Option<(i64, String)> =
-            sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1")
+            sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1 FOR KEY SHARE")
                 .bind(qr_id)
-                .fetch_optional(&st.db)
+                .fetch_optional(&mut *conn)
                 .await?;
         match row {
             Some((owner, mime)) if owner == u.id && mime.starts_with("image/") => {}
@@ -444,8 +450,8 @@ pub(super) async fn snapshot_on(db: &mut sqlx::PgConnection, s: &SRow) -> AppRes
         .bind(s.id)
         .fetch_all(&mut *db)
         .await?;
-    let shares: Vec<(i64, i64, String, i64, String, Option<i64>, String, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT sh.id, sh.user_id, u.name, sh.amount_cents, sh.status, sh.proof_file_id, sh.txn_ref, sh.paid_date, sh.note, sh.updated_at
+    let shares: Vec<(i64, i64, String, i64, i64, String, Option<i64>, String, Option<String>, String, String)> = sqlx::query_as(
+        "SELECT sh.id, sh.user_id, u.name, sh.amount_cents, sh.paid_cents, sh.status, sh.proof_file_id, sh.txn_ref, sh.paid_date, sh.note, sh.updated_at
          FROM settlement_shares sh JOIN users u ON u.id=sh.user_id WHERE sh.settlement_id=$1 ORDER BY u.name",
     )
     .bind(s.id)
@@ -460,8 +466,8 @@ pub(super) async fn snapshot_on(db: &mut sqlx::PgConnection, s: &SRow) -> AppRes
         "status": s.status, "version": s.version, "created_at": s.created_at,
         "gross_cents": gross, "total_cents": gross - s.subsidy_cents,
         "items": items.into_iter().map(|(id, l, a, r)| json!({"id": id, "label": l, "amount_cents": a, "receipt_file_id": r})).collect::<Vec<_>>(),
-        "shares": shares.into_iter().map(|(id, uid, name, amt, status, proof, txn, pd, note, upd)| json!({
-            "id": id, "user_id": uid, "name": name, "amount_cents": amt, "status": status, "proof_file_id": proof,
+        "shares": shares.into_iter().map(|(id, uid, name, amt, paid_cents, status, proof, txn, pd, note, upd)| json!({
+            "id": id, "user_id": uid, "name": name, "amount_cents": amt, "paid_cents": paid_cents, "status": status, "proof_file_id": proof,
             "txn_ref": txn, "paid_date": pd, "note": note, "updated_at": upd,
         })).collect::<Vec<_>>(),
     }))

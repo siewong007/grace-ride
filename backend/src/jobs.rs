@@ -82,6 +82,9 @@ pub fn spawn_with_shutdown(
             tokio::spawn(async move {
                 let _ = db_init;
                 if let Ok(client) = reqwest::Client::builder()
+                    .use_rustls_tls()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .connect_timeout(Duration::from_secs(5))
                     .timeout(Duration::from_secs(10))
                     .build()
                 {
@@ -120,6 +123,9 @@ pub fn spawn_with_shutdown(
                 last_housekeeping = Some(Instant::now());
                 if !cfg.dev_mode {
                     if let Ok(client) = reqwest::Client::builder()
+                        .use_rustls_tls()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .connect_timeout(Duration::from_secs(5))
                         .timeout(Duration::from_secs(10))
                         .build()
                     {

@@ -132,6 +132,7 @@ fun EventDetailScreen(
     checkinCode: String? = null,
     openCheckin: Boolean = false,
 ) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: EventDetailViewModel = viewModel(
         key = "event-$id",
         factory = EventDetailViewModel.factory(container, id),

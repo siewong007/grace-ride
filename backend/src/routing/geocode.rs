@@ -182,7 +182,10 @@ async fn nominatim(st: &AppState, q: &str) -> Result<Option<LatLng>, String> {
     if !res.status().is_success() {
         return Err(format!("HTTP {}", res.status()));
     }
-    let v: Value = res.json().await.map_err(http_err)?;
+    let bytes = crate::util::read_response_bytes_bounded(res, 512 * 1024)
+        .await
+        .map_err(|e| format!("geocode read failed: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("geocode json: {e}"))?;
     Ok(v.get(0).and_then(|f| {
         let lat = f["lat"].as_str()?.parse().ok()?;
         let lng = f["lon"].as_str()?.parse().ok()?;
@@ -319,13 +322,21 @@ pub async fn search_places(st: &AppState, q: &str, lang: &str) -> Vec<Place> {
         ])
         .header(reqwest::header::USER_AGENT, &cfg.user_agent);
     let hits = match send(req).await {
-        Ok(res) if res.status().is_success() => match res.json::<Value>().await {
-            Ok(v) => parse_photon(&v, &cfg.country),
-            Err(e) => {
-                tracing::warn!("place search unreadable: {}", http_err(e));
-                return Vec::new();
+        Ok(res) if res.status().is_success() => {
+            match crate::util::read_response_bytes_bounded(res, 512 * 1024).await {
+                Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(v) => parse_photon(&v, &cfg.country),
+                    Err(e) => {
+                        tracing::warn!("place search unreadable: {e}");
+                        return Vec::new();
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("place search unreadable: {e}");
+                    return Vec::new();
+                }
             }
-        },
+        }
         Ok(res) => {
             tracing::warn!("place search unavailable: HTTP {}", res.status());
             return Vec::new();

@@ -328,6 +328,7 @@ pub(super) async fn approve_recovery(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::stream::revoke_user(uid);
     st.limiter
         .reset(&format!("pw_attempt:user:{}", email.to_lowercase()));
     audit(

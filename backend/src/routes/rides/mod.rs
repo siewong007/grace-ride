@@ -294,6 +294,18 @@ pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow>
         .ok_or(not_found(lang))
 }
 
+pub(super) async fn load_ride_on(
+    conn: &mut sqlx::PgConnection,
+    lang: Lang,
+    id: i64,
+) -> AppResult<RideRow> {
+    sqlx::query_as::<_, RideRow>(crate::dyn_sql!("{RIDE_SELECT} WHERE r.id = $1"))
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or(not_found(lang))
+}
+
 /// The fixed driver fare for a ride's route, for rides to a mileage-claimable event held
 /// in a known area. `amount_cents` is null while the traffic lead has not priced the pair.
 fn route_fare(

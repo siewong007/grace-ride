@@ -116,6 +116,7 @@ private data class QuickActionItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(container: AppContainer, nav: NavHostController) {
+    org.pjstatecm.graceride.ui.SecureScreenEffect()
     val vm: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()

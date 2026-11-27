@@ -87,6 +87,17 @@ export function clearAutoLock(): void {
   }
 }
 
+/** Clear a deferred offline-logout marker after a fresh sign-in succeeds. */
+export function clearPendingLogout(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('gr_pending_logout');
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
 /** Clear all client-side session caches, drafts, passkey hints, and lock markers. */
 export function clearClientSessionStorage(): void {
   clearOfflineSnapshots();
@@ -104,6 +115,7 @@ export function clearClientSessionStorage(): void {
     }
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem('graceride_walkthrough');
+      sessionStorage.removeItem('gr_notif_prompt_dismissed');
     }
   } catch {
     /* ignore storage errors */
@@ -111,6 +123,9 @@ export function clearClientSessionStorage(): void {
 }
 
 function readRaw(userId: number): TodaySnapshot | null {
+  if (isLocalSessionLocked()) {
+    return null;
+  }
   try {
     const raw = localStorage.getItem(SNAPSHOT_KEY);
     if (!raw) return null;

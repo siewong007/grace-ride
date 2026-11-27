@@ -74,8 +74,12 @@ private data class PendingNavTarget(
 
 /** Launch the system dialer pre-filled with [phone] without requiring CALL_PHONE permission. */
 fun dialPhone(context: Context, phone: String) {
-    val cleaned = phone.filter { it.isDigit() || it == '+' }
-    if (cleaned.isEmpty()) return
+    val cleaned = buildString {
+        phone.trim().forEachIndexed { idx, ch ->
+            if (ch.isDigit() || (ch == '+' && idx == 0)) append(ch)
+        }
+    }
+    if (cleaned.none { it.isDigit() }) return
     val intent = Intent(Intent.ACTION_DIAL, "tel:$cleaned".toUri()).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
@@ -83,14 +87,17 @@ fun dialPhone(context: Context, phone: String) {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         // No dialer activity available on this device.
+    } catch (_: SecurityException) {
+        // Dialer launch disallowed by policy.
     }
 }
 
 /** Launch Waze turn-by-turn navigation, falling back to `waze.com/ul` in web/browser. */
 fun openInWaze(context: Context, lat: Double?, lng: Double?, query: String) {
     val trimmed = query.trim()
+    val hasCoords = lat != null && lng != null && lat.isFinite() && lng.isFinite()
     val wazeUri = when {
-        lat != null && lng != null -> "waze://?ll=$lat,$lng&navigate=yes"
+        hasCoords -> "waze://?ll=$lat,$lng&navigate=yes"
         trimmed.isNotEmpty() -> "waze://?q=${Uri.encode(trimmed)}&navigate=yes"
         else -> return
     }
@@ -101,18 +108,21 @@ fun openInWaze(context: Context, lat: Double?, lng: Double?, query: String) {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         val webUrl = when {
-            lat != null && lng != null -> "https://waze.com/ul?ll=$lat,$lng&navigate=yes"
+            hasCoords -> "https://waze.com/ul?ll=$lat,$lng&navigate=yes"
             else -> "https://waze.com/ul?q=${Uri.encode(trimmed)}&navigate=yes"
         }
         openInWebApp(context, webUrl)
+    } catch (_: SecurityException) {
+        // Cross-app launch disallowed by policy.
     }
 }
 
 /** Launch Google Maps turn-by-turn navigation, falling back to [openInMaps]. */
 fun openInGoogleMaps(context: Context, lat: Double?, lng: Double?, query: String) {
     val trimmed = query.trim()
+    val hasCoords = lat != null && lng != null && lat.isFinite() && lng.isFinite()
     val target = when {
-        lat != null && lng != null -> "google.navigation:q=$lat,$lng"
+        hasCoords -> "google.navigation:q=$lat,$lng"
         trimmed.isNotEmpty() -> "google.navigation:q=${Uri.encode(trimmed)}"
         else -> return
     }
@@ -122,8 +132,10 @@ fun openInGoogleMaps(context: Context, lat: Double?, lng: Double?, query: String
     try {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
-        val fallback = if (lat != null && lng != null) "$lat,$lng" else trimmed
+        val fallback = if (hasCoords) "$lat,$lng" else trimmed
         openInMaps(context, fallback)
+    } catch (_: SecurityException) {
+        // Cross-app launch disallowed by policy.
     }
 }
 
@@ -291,6 +303,8 @@ fun openInMaps(context: Context, query: String) {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         openInWebApp(context, "https://www.openstreetmap.org/search?query=${Uri.encode(trimmed)}")
+    } catch (_: SecurityException) {
+        // Cross-app launch disallowed by policy.
     }
 }
 

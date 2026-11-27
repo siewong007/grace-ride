@@ -8,7 +8,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::geocode::{geocode, http_err, send};
+use super::geocode::{geocode, send};
 use super::order::choose_order;
 use super::{
     estimate, round5, split_points, straight_matrix, Cached, LatLng, LIVE_TTL, PICKUP_DWELL_S,
@@ -40,7 +40,10 @@ async fn osrm_get(st: &AppState, path: &str) -> Result<Value, String> {
     if !res.status().is_success() {
         return Err(format!("HTTP {}", res.status()));
     }
-    let v: Value = res.json().await.map_err(http_err)?;
+    let bytes = crate::util::read_response_bytes_bounded(res, 2 * 1024 * 1024)
+        .await
+        .map_err(|e| format!("OSRM read: {e}"))?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|e| format!("OSRM json: {e}"))?;
     if v["code"] != "Ok" {
         return Err(format!("OSRM {}", v["code"]));
     }

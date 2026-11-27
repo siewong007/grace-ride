@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -30,8 +30,10 @@ interface CheckinInfo {
 export default function EventCheckin() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [params] = useSearchParams();
-  const queryCode = params.get('code') || '';
+  const stateCode = (location.state as { checkinCode?: string } | null)?.checkinCode || '';
+  const queryCode = stateCode || params.get('code') || '';
   const { t } = useTranslation('eventDetail');
   const ft = useFormatT();
   const { me } = useAuth();
@@ -89,7 +91,7 @@ export default function EventCheckin() {
     if (window.location.search.includes('code=')) {
       window.history.replaceState(window.history.state, '', window.location.pathname);
     }
-  }, []);
+  }, [id, queryCode]);
 
   useEffect(() => {
     if (!id || !queryCode || isNonMember) return;
@@ -104,11 +106,9 @@ export default function EventCheckin() {
       // If scanned QR belongs to another event, navigate to that event's check-in
       if (details.eventId && String(details.eventId) !== String(id)) {
         setCameraActive(false);
-        navigate(
-          `/events/${details.eventId}/checkin${
-            details.code ? `?code=${encodeURIComponent(details.code)}` : ''
-          }`,
-        );
+        navigate(`/events/${details.eventId}/checkin`, {
+          state: details.code ? { checkinCode: details.code } : undefined,
+        });
         return;
       }
 
@@ -127,11 +127,9 @@ export default function EventCheckin() {
     const details = extractCheckinDetails(manualCode);
     if (details.eventId && String(details.eventId) !== String(id)) {
       setCameraActive(false);
-      navigate(
-        `/events/${details.eventId}/checkin${
-          details.code ? `?code=${encodeURIComponent(details.code)}` : ''
-        }`,
-      );
+      navigate(`/events/${details.eventId}/checkin`, {
+        state: details.code ? { checkinCode: details.code } : undefined,
+      });
       return;
     }
     submitCheckin(details.code || manualCode);
