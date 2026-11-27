@@ -271,19 +271,26 @@ jobs:
 
           write_pre_roll_dump() {
             local dump_base="/opt/grace-ride/pre-roll-backups/pre-${SHA}.dump"
-            local age_pub allow_plain
+            local age_pub enc_key allow_plain
             age_pub=$(grep -E '^BACKUP_AGE_RECIPIENT=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
+            enc_key=$(grep -E '^SECRETS_ENCRYPTION_KEY=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
             allow_plain=$(grep -E '^ALLOW_PLAINTEXT_PRE_ROLL_DUMP=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
             (
               umask 077
               if [[ -n "$age_pub" ]] && command -v age >/dev/null 2>&1; then
                 docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc | age -r "$age_pub" -o "${dump_base}.age"
                 chmod 600 "${dump_base}.age"
+              elif [[ -n "$enc_key" ]] && command -v openssl >/dev/null 2>&1; then
+                # Fallback symmetric encryption at rest using SECRETS_ENCRYPTION_KEY via env.
+                # Recover with: PRE_ROLL_ENC_KEY="$SECRETS_ENCRYPTION_KEY" openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:PRE_ROLL_ENC_KEY -in <file>.enc -out pre.dump
+                docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc \
+                  | PRE_ROLL_ENC_KEY="$enc_key" openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PRE_ROLL_ENC_KEY -out "${dump_base}.enc"
+                chmod 600 "${dump_base}.enc"
               elif [[ "$allow_plain" == "true" ]]; then
                 docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_base"
                 chmod 600 "$dump_base"
               else
-                echo "Refusing unencrypted pre-roll DB dump (set BACKUP_AGE_RECIPIENT + install age, or ALLOW_PLAINTEXT_PRE_ROLL_DUMP=true)" >&2
+                echo "Refusing unencrypted pre-roll DB dump (set BACKUP_AGE_RECIPIENT + install age, configure SECRETS_ENCRYPTION_KEY + openssl, or set ALLOW_PLAINTEXT_PRE_ROLL_DUMP=true)" >&2
                 exit 1
               fi
             )
