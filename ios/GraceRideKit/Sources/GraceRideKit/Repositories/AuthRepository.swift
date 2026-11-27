@@ -27,6 +27,7 @@ public final class AuthRepository {
     private let store: SecureStore?
     private let onCleared: (@Sendable () -> Void)?
     private let onLockedCallback: (@Sendable () -> Void)?
+    private let uptimeProvider: @Sendable () -> TimeInterval
 
     public private(set) var state: AuthState = .loading
 
@@ -47,7 +48,8 @@ public final class AuthRepository {
         cookies: PersistentCookieJar,
         store: SecureStore? = nil,
         onCleared: (@Sendable () -> Void)? = nil,
-        onLockedCallback: (@Sendable () -> Void)? = nil
+        onLockedCallback: (@Sendable () -> Void)? = nil,
+        uptimeProvider: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.apiProvider = apiProvider
         self.bus = bus
@@ -55,6 +57,7 @@ public final class AuthRepository {
         self.store = store
         self.onCleared = onCleared
         self.onLockedCallback = onLockedCallback
+        self.uptimeProvider = uptimeProvider
     }
 
     private func stateFor(_ m: Me) -> AuthState {
@@ -76,12 +79,13 @@ public final class AuthRepository {
 
     public func recordBackgroundTimestamp(
         nowMillis: Int64 = PersistentCookieJar.currentMillis(),
-        nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+        nowUptime: TimeInterval? = nil
     ) {
+        let resolvedUptime = nowUptime ?? uptimeProvider()
         switch state {
         case .signedIn, .pending:
             store?.putString(Self.cachedMeAtKey, String(nowMillis))
-            store?.putString(Self.cachedMeUptimeKey, String(nowUptime))
+            store?.putString(Self.cachedMeUptimeKey, String(resolvedUptime))
         case .loading, .signedOut, .locked:
             break
         }
@@ -90,15 +94,16 @@ public final class AuthRepository {
     private func cacheMe(
         _ m: Me,
         nowMillis: Int64 = PersistentCookieJar.currentMillis(),
-        nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+        nowUptime: TimeInterval? = nil
     ) {
+        let resolvedUptime = nowUptime ?? uptimeProvider()
         guard let data = try? JSONEncoder().encode(m),
               let raw = String(data: data, encoding: .utf8) else {
             return
         }
         store?.putString(Self.cachedMeKey, raw)
         store?.putString(Self.cachedMeAtKey, String(nowMillis))
-        store?.putString(Self.cachedMeUptimeKey, String(nowUptime))
+        store?.putString(Self.cachedMeUptimeKey, String(resolvedUptime))
     }
 
     private func loadCachedMe() -> Me? {
@@ -112,8 +117,9 @@ public final class AuthRepository {
     public func isCachedIdleExpired(
         _ m: Me,
         nowMillis: Int64 = PersistentCookieJar.currentMillis(),
-        nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+        nowUptime: TimeInterval? = nil
     ) -> Bool {
+        let resolvedUptime = nowUptime ?? uptimeProvider()
         let effectiveMins = m.autoLockMins > 0
             ? m.autoLockMins
             : (m.autoLockMins == -1 ? 0 : m.sessionTimeoutMins)
@@ -133,10 +139,10 @@ public final class AuthRepository {
         if let uptimeStr = store?.getString(Self.cachedMeUptimeKey),
            let savedUptime = Double(uptimeStr) {
             // Device rebooted (uptime reset) or monotonic elapsed idle reached threshold.
-            if nowUptime < savedUptime {
+            if resolvedUptime < savedUptime {
                 return true
             }
-            let elapsedUptimeMins = Int64((nowUptime - savedUptime) / 60.0)
+            let elapsedUptimeMins = Int64((resolvedUptime - savedUptime) / 60.0)
             if elapsedUptimeMins >= Int64(effectiveMins) {
                 return true
             }
@@ -147,7 +153,7 @@ public final class AuthRepository {
     @discardableResult
     public func enforceIdleTimeoutIfNeeded(
         nowMillis: Int64 = PersistentCookieJar.currentMillis(),
-        nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+        nowUptime: TimeInterval? = nil
     ) -> Bool {
         switch state {
         case .signedIn(let m), .pending(let m):
