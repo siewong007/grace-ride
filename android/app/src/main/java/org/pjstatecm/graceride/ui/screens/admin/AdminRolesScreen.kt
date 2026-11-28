@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -61,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,6 +79,7 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.domain.RoleLabels
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -152,10 +155,11 @@ fun AdminRolesScreen(
         bottomBar = {
             if (canView && editable && !(state.loading && state.roles.isEmpty())) {
                 Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.navigationBarsPadding().imePadding()) {
+                    Column(Modifier.navigationBarsPadding().imePadding(), horizontalAlignment = Alignment.CenterHorizontally) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Row(
                             Modifier
+                                .widthIn(max = 840.dp)
                                 .fillMaxWidth()
                                 .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -215,39 +219,40 @@ fun AdminRolesScreen(
                 val groupedCatalog = remember(state.catalog) {
                     state.catalog.groupBy { it.area.ifBlank { "other" } }
                 }
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
-                    contentPadding = PaddingValues(Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                ) {
-                    item {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            if (state.isNew) {
-                                item {
+                AdaptiveContentFrame(maxWidth = 840.dp, compactHorizontalPadding = 0.dp, modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
+                        item {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                if (state.isNew) {
+                                    item {
+                                        FilterChip(
+                                            selected = true,
+                                            onClick = {},
+                                            label = { Text(stringResource(R.string.roles_new_role)) },
+                                        )
+                                    }
+                                }
+                                items(state.roles, key = { it.key }) { r ->
+                                    val label = roleDisplayLabel(r)
+                                    val sub = if (r.implicit) stringResource(R.string.roles_everyone)
+                                    else pluralStringResource(R.plurals.member_count_plural, r.members.toInt(), r.members)
                                     FilterChip(
-                                        selected = true,
-                                        onClick = {},
-                                        label = { Text(stringResource(R.string.roles_new_role)) },
+                                        selected = !state.isNew && state.selectedKey == r.key,
+                                        onClick = {
+                                            if (state.selectedKey != r.key) {
+                                                UiHaptics.tick(view)
+                                                if (state.dirty) pendingPickKey = r.key else vm.selectRole(r.key)
+                                            }
+                                        },
+                                        label = { Text("$label ($sub)") },
                                     )
                                 }
                             }
-                            items(state.roles, key = { it.key }) { r ->
-                                val label = roleDisplayLabel(r)
-                                val sub = if (r.implicit) stringResource(R.string.roles_everyone)
-                                else stringResource(R.string.roles_member_count, r.members)
-                                FilterChip(
-                                    selected = !state.isNew && state.selectedKey == r.key,
-                                    onClick = {
-                                        if (state.selectedKey != r.key) {
-                                            UiHaptics.tick(view)
-                                            if (state.dirty) pendingPickKey = r.key else vm.selectRole(r.key)
-                                        }
-                                    },
-                                    label = { Text("$label ($sub)") },
-                                )
-                            }
                         }
-                    }
 
                     role?.let { r ->
                         item {
@@ -389,6 +394,7 @@ fun AdminRolesScreen(
 
                     item { Spacer(Modifier.height(Spacing.md)) }
                 }
+                }
             }
         }
     }
@@ -466,7 +472,7 @@ private fun RolePageSection(
         }
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
         ) {
             entry.actions.forEach { act ->

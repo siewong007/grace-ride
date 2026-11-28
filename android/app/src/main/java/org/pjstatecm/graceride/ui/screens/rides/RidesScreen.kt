@@ -53,6 +53,7 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -164,26 +165,32 @@ fun RidesScreen(container: AppContainer, nav: NavHostController) {
                         "error" -> ErrorView(tabState.error ?: "", onRetry = vm::refresh)
                         else -> PullToRefreshBox(isRefreshing = tabState.refreshing, onRefresh = vm::refresh) {
                             val isUpcomingTab = tab == 0
-                            LazyColumn(
-                                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                contentPadding = PaddingValues(top = Spacing.xs, bottom = if (isUpcomingTab) 88.dp else Spacing.xs),
+                            AdaptiveContentFrame(
+                                maxWidth = 920.dp,
+                                compactHorizontalPadding = 0.dp,
+                                modifier = Modifier.fillMaxSize(),
                             ) {
-                                if (tabState.rides.isEmpty()) {
-                                    item {
-                                        EmptyView(
-                                            text = stringResource(R.string.rides_empty),
-                                            icon = Icons.Outlined.DirectionsCar,
+                                LazyColumn(
+                                    Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    contentPadding = PaddingValues(top = Spacing.xs, bottom = if (isUpcomingTab) 88.dp else Spacing.xs),
+                                ) {
+                                    if (tabState.rides.isEmpty()) {
+                                        item {
+                                            EmptyView(
+                                                text = stringResource(R.string.rides_empty),
+                                                icon = Icons.Outlined.DirectionsCar,
+                                            )
+                                        }
+                                    }
+                                    items(tabState.rides, key = { it.id }) { ride ->
+                                        RideCard(
+                                            ride,
+                                            photoUrlFor = container::fileUrl,
+                                            onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                            modifier = Modifier.animateItem(),
                                         )
                                     }
-                                }
-                                items(tabState.rides, key = { it.id }) { ride ->
-                                    RideCard(
-                                        ride,
-                                        photoUrlFor = container::fileUrl,
-                                        onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
-                                        modifier = Modifier.animateItem(),
-                                    )
                                 }
                             }
                         }

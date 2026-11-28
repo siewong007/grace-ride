@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +43,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import org.pjstatecm.graceride.data.api.AreaPhotoDto
 import org.pjstatecm.graceride.ui.SecureScreenEffect
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.copyToClipboard
 import org.pjstatecm.graceride.ui.shareText
 import androidx.compose.material.icons.Icons
@@ -268,8 +271,10 @@ fun RideDetailScreen(
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
                                 .padding(Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
+                            AdaptiveContentFrame(maxWidth = 840.dp) {
+                                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                             if (state.queuedOffline.isNotEmpty()) {
                                 Surface(
                                     color = c.warningSoft,
@@ -1176,6 +1181,8 @@ fun RideDetailScreen(
                                 }
                             }
                         }
+                            }
+                        }
                     }
                 }
             }
@@ -1227,6 +1234,9 @@ fun RideDetailScreen(
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = Spacing.sm)
                     .padding(bottom = Spacing.md),
                 verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -1315,7 +1325,7 @@ fun RideDetailScreen(
             onDismissRequest = { confirmUnable = false; unableNotes = "" },
             title = { Text(stringResource(R.string.ride_unable_confirm_title)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(stringResource(R.string.ride_unable_confirm_body))
                     OutlinedTextField(
                         value = unableNotes,
@@ -1347,7 +1357,7 @@ fun RideDetailScreen(
             onDismissRequest = { confirmCancel = false; cancelReason = "" },
             title = { Text(stringResource(R.string.ride_cancel)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(stringResource(R.string.ride_cancel_confirm))
                     OutlinedTextField(
                         value = cancelReason,
@@ -1413,7 +1423,7 @@ fun RideDetailScreen(
             onDismissRequest = { confirmWithdraw = false },
             title = { Text(stringResource(R.string.driver_withdraw)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(stringResource(R.string.driver_withdraw_confirm))
                     OutlinedTextField(
                         value = withdrawReason,

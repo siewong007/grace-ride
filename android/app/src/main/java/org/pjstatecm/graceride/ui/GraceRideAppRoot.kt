@@ -25,7 +25,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +35,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
@@ -49,13 +53,15 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -324,7 +330,11 @@ fun GraceRideAppRoot(
                     when (val dest = NotifLinkRouter.resolveFor(rawLink, signedIn.me)) {
                         is NotifDestination.Native -> {
                             if (dest.route in Routes.tabs) {
-                                navController.navigateTab(dest.route)
+                                navController.navigateRoute(dest.route) {
+                                    popUpTo<AppRoute.Home> { saveState = false }
+                                    launchSingleTop = true
+                                    restoreState = false
+                                }
                             } else {
                                 navController.navigateRoute(dest.route) {
                                     launchSingleTop = true
@@ -381,12 +391,17 @@ fun GraceRideAppRoot(
                 }
             }
 
-            val isTabRoute = currentRoute != null && Routes.tabClasses.any {
-                matchesRouteClass(currentRoute, it)
-            }
-            val adaptiveInfo = currentWindowAdaptiveInfo()
-            val calculatedSuiteType = NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(adaptiveInfo)
-            val useFloatingBottomPill = isTabRoute && calculatedSuiteType == NavigationSuiteType.NavigationBar
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val isTabRoute = currentRoute != null && Routes.tabClasses.any {
+                    matchesRouteClass(currentRoute, it)
+                }
+                val adaptiveInfo = currentWindowAdaptiveInfo()
+                val calculatedSuiteType = when {
+                    adaptiveInfo.windowPosture.isTabletop -> NavigationSuiteType.NavigationBar
+                    maxWidth >= 600.dp || maxHeight < 480.dp -> NavigationSuiteType.NavigationRail
+                    else -> NavigationSuiteType.NavigationBar
+                }
+                val useFloatingBottomPill = isTabRoute && calculatedSuiteType == NavigationSuiteType.NavigationBar
             val layoutType = if (!isTabRoute || useFloatingBottomPill) {
                 NavigationSuiteType.None
             } else {
@@ -414,6 +429,20 @@ fun GraceRideAppRoot(
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
+                navigationRailItemColors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                navigationDrawerItemColors = NavigationDrawerItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
             )
             val suiteColors = NavigationSuiteDefaults.colors(
                 navigationBarContainerColor = MaterialTheme.colorScheme.background,
@@ -421,6 +450,11 @@ fun GraceRideAppRoot(
                 navigationRailContainerColor = MaterialTheme.colorScheme.background,
                 navigationRailContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            val navHomeLabel = stringResource(R.string.nav_home)
+            val navEventsLabel = stringResource(R.string.nav_events)
+            val navTrafficLabel = stringResource(R.string.nav_traffic)
+            val navProfileLabel = stringResource(R.string.nav_profile)
 
             NavigationSuiteScaffold(
                 layoutType = layoutType,
@@ -432,13 +466,14 @@ fun GraceRideAppRoot(
                             UiHaptics.tick(view)
                             navController.navigateTab(AppRoute.Home)
                         },
+                        modifier = Modifier.semantics { contentDescription = navHomeLabel },
                         icon = {
                             Icon(
                                 if (isHomeSelected) Icons.Filled.Home else Icons.Outlined.Home,
                                 contentDescription = null,
                             )
                         },
-                        label = { Text(stringResource(R.string.nav_home)) },
+                        label = { Text(navHomeLabel) },
                         colors = navItemColors,
                     )
                     if (canEventsTab) {
@@ -448,13 +483,14 @@ fun GraceRideAppRoot(
                                 UiHaptics.tick(view)
                                 navController.navigateTab(AppRoute.Events)
                             },
+                            modifier = Modifier.semantics { contentDescription = navEventsLabel },
                             icon = {
                                 Icon(
                                     if (isEventsSelected) Icons.Filled.Event else Icons.Outlined.Event,
                                     contentDescription = null,
                                 )
                             },
-                            label = { Text(stringResource(R.string.nav_events)) },
+                            label = { Text(navEventsLabel) },
                             colors = navItemColors,
                         )
                     }
@@ -465,13 +501,14 @@ fun GraceRideAppRoot(
                                 UiHaptics.tick(view)
                                 navController.navigateTab(AppRoute.TrafficHub())
                             },
+                            modifier = Modifier.semantics { contentDescription = navTrafficLabel },
                             icon = {
                                 Icon(
                                     if (isTrafficSelected) Icons.AutoMirrored.Filled.AltRoute else Icons.AutoMirrored.Outlined.AltRoute,
                                     contentDescription = null,
                                 )
                             },
-                            label = { Text(stringResource(R.string.nav_traffic)) },
+                            label = { Text(navTrafficLabel) },
                             colors = navItemColors,
                         )
                     }
@@ -481,31 +518,49 @@ fun GraceRideAppRoot(
                             UiHaptics.tick(view)
                             navController.navigateTab(AppRoute.Profile)
                         },
+                        modifier = Modifier.semantics { contentDescription = navProfileLabel },
                         icon = {
-                            MemberAvatar(
-                                name = signedInMe?.name ?: "",
-                                photoUrl = signedInMe?.photoFileId?.let(container::fileUrl),
-                                avatarColor = signedInMe?.avatarColor,
-                                avatarIcon = signedInMe?.avatarIcon,
-                                size = 24.dp,
-                            )
+                            Box(
+                                modifier = if (isProfileSelected && layoutType != NavigationSuiteType.None) {
+                                    Modifier
+                                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                        .padding(2.dp)
+                                } else {
+                                    Modifier
+                                },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                MemberAvatar(
+                                    name = signedInMe?.name ?: "",
+                                    photoUrl = signedInMe?.photoFileId?.let(container::fileUrl),
+                                    avatarColor = signedInMe?.avatarColor,
+                                    avatarIcon = signedInMe?.avatarIcon,
+                                    size = 24.dp,
+                                )
+                            }
                         },
-                        label = { Text(stringResource(R.string.nav_profile)) },
+                        label = { Text(navProfileLabel) },
                         colors = navItemColors,
                     )
                 },
             ) {
                 CompositionLocalProvider(
-                    LocalBottomBarClearance provides if (calculatedSuiteType == NavigationSuiteType.NavigationBar) 80.dp else 0.dp,
+                    LocalBottomBarClearance provides if (useFloatingBottomPill) 80.dp else 0.dp,
                 ) {
-                    Scaffold { padding ->
+                    Scaffold(
+                        contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
+                    ) { padding ->
                         Box(
                             Modifier
                                 .fillMaxSize()
                                 .padding(padding)
                                 .consumeWindowInsets(padding),
                         ) {
-                            Column(Modifier.fillMaxSize()) {
+                            Row(Modifier.fillMaxSize()) {
+                                if (layoutType == NavigationSuiteType.NavigationRail) {
+                                    VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                }
+                                Column(Modifier.weight(1f).fillMaxHeight()) {
                         AnimatedVisibility(
                             visible = !isOnline && authState is AuthState.SignedIn,
                             enter = slideInVertically(tween(180)) { -it } + fadeIn(tween(160)),
@@ -898,6 +953,7 @@ fun GraceRideAppRoot(
                                 }
                             }
                         }
+                                }
                             }
                             AnimatedVisibility(
                                 visible = useFloatingBottomPill,
@@ -913,24 +969,40 @@ fun GraceRideAppRoot(
                                     fadeOut(tween(80))
                                 },
                             ) {
-                                FloatingGlassBottomBar(
-                                    isHomeSelected = isHomeSelected,
-                                    isEventsSelected = isEventsSelected,
-                                    isTrafficSelected = isTrafficSelected,
-                                    isProfileSelected = isProfileSelected,
-                                    canEvents = canEventsTab,
-                                    canTraffic = canTrafficTab,
-                                    signedInMe = signedInMe,
-                                    fileUrlProvider = container::fileUrl,
-                                    onSelectTab = { route ->
-                                        UiHaptics.tick(view)
-                                        navController.navigateTab(route)
-                                    },
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(
+                                                    Color.Transparent,
+                                                    MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
+                                                    MaterialTheme.colorScheme.background.copy(alpha = 0.94f),
+                                                ),
+                                            ),
+                                        ),
+                                    contentAlignment = Alignment.BottomCenter,
+                                ) {
+                                    FloatingGlassBottomBar(
+                                        isHomeSelected = isHomeSelected,
+                                        isEventsSelected = isEventsSelected,
+                                        isTrafficSelected = isTrafficSelected,
+                                        isProfileSelected = isProfileSelected,
+                                        canEvents = canEventsTab,
+                                        canTraffic = canTrafficTab,
+                                        signedInMe = signedInMe,
+                                        fileUrlProvider = container::fileUrl,
+                                        onSelectTab = { route ->
+                                            UiHaptics.tick(view)
+                                            navController.navigateTab(route)
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
             }
             }
             if (signedInMe != null &&
@@ -1100,14 +1172,14 @@ private fun FloatingGlassBottomBar(
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     val capsuleGradient = if (isDark) {
-        Brush.verticalGradient(listOf(Color(0xC7202228), Color(0xD6121317)))
+        Brush.verticalGradient(listOf(Color(0xEB22252C), Color(0xF514161B)))
     } else {
-        Brush.verticalGradient(listOf(Color(0xDBFFFFFF), Color(0xCCF3F5F9)))
+        Brush.verticalGradient(listOf(Color(0xF2FFFFFF), Color(0xECF3F5F9)))
     }
     val specularBorder = if (isDark) {
-        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.24f), Color.White.copy(alpha = 0.06f)))
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.10f)))
     } else {
-        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.92f), Color(0xFF0F172A).copy(alpha = 0.08f)))
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.96f), Color(0xFF0F172A).copy(alpha = 0.12f)))
     }
     val pillFill = if (isDark) Color.White.copy(alpha = 0.16f) else Color(0xFF0F172A).copy(alpha = 0.08f)
     val pillBorder = if (isDark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.65f)

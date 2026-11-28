@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
-import { useApi } from './api';
+import { api, useApi } from './api';
 import { AuthProvider, useAuth } from './auth';
 
 function deferredResponse() {
@@ -122,5 +122,54 @@ describe('AuthProvider network polling hygiene', () => {
       await Promise.resolve();
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('api GET deduplication & ref-counted abort handling', () => {
+  it('shares a single fetch across concurrent callers and keeps request alive until all abort', async () => {
+    const deferred = deferredResponse();
+    const signals: AbortSignal[] = [];
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      return deferred.promise;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const c1 = new AbortController();
+    const c2 = new AbortController();
+    const p1 = api<{ value: string }>('/shared', { signal: c1.signal });
+    const p2 = api<{ value: string }>('/shared', { signal: c2.signal });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(signals[0].aborted).toBe(false);
+
+    // Aborting one caller rejects only that caller while the shared fetch stays open for the second caller.
+    c1.abort();
+    await expect(p1).rejects.toMatchObject({ name: 'AbortError' });
+    expect(signals[0].aborted).toBe(false);
+
+    deferred.resolve(response('shared-ok'));
+    await expect(p2).resolves.toEqual({ value: 'shared-ok' });
+
+    // A second pair of callers where every caller aborts DOES abort the underlying fetch signal.
+    const signals2: AbortSignal[] = [];
+    const d2 = deferredResponse();
+    const fetchMock2 = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals2.push(init.signal);
+      return d2.promise;
+    });
+    vi.stubGlobal('fetch', fetchMock2);
+
+    const a1 = new AbortController();
+    const a2 = new AbortController();
+    const q1 = api<{ value: string }>('/shared-abort', { signal: a1.signal });
+    const q2 = api<{ value: string }>('/shared-abort', { signal: a2.signal });
+    expect(fetchMock2).toHaveBeenCalledTimes(1);
+    a1.abort();
+    expect(signals2[0].aborted).toBe(false);
+    a2.abort();
+    expect(signals2[0].aborted).toBe(true);
+    await expect(q1).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(q2).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

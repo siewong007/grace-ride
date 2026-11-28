@@ -74,6 +74,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -132,13 +133,15 @@ fun HelpDetailScreen(
             else -> {
                 val tk = state.ticket!!
                 val isResolved = tk.status == "closed"
-                Column(
-                    Modifier
+                AdaptiveContentFrame(
+                    modifier = Modifier
                         .fillMaxSize()
                         .padding(padding)
                         .imePadding()
                         .navigationBarsPadding(),
+                    maxWidth = 720.dp,
                 ) {
+                    Column(Modifier.fillMaxSize()) {
                     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
                         Column(
                             Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs),
@@ -358,6 +361,7 @@ fun HelpDetailScreen(
                         ) {
                             Text(stringResource(R.string.help_reopen))
                         }
+                    }
                     }
                 }
             }

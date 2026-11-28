@@ -209,10 +209,17 @@ fun RideCard(
             val c = LocalStatusColors.current
             if (!ride.viewer.isPassenger) {
                 val riderName = when {
-                    ride.isProxy && !ride.proxy?.riderName.isNullOrBlank() && !ride.proxy?.bookerName.isNullOrBlank() ->
-                        "${ride.proxy!!.riderName} (${ride.proxy.bookerName})"
-                    ride.isProxy && !ride.proxy?.riderName.isNullOrBlank() ->
-                        ride.proxy!!.riderName
+                    ride.isProxy && !ride.proxy?.riderName.isNullOrBlank() -> {
+                        val rider = ride.proxy!!.riderName.trim()
+                        val booker = ride.proxy.bookerName
+                            ?.trim()
+                            ?.takeIf {
+                                it.isNotEmpty() &&
+                                    !it.equals(rider, ignoreCase = true) &&
+                                    !rider.contains(it, ignoreCase = true)
+                            }
+                        if (booker != null) "$rider ($booker)" else rider
+                    }
                     else -> ride.passenger.name
                 }
                 val eventSubtitle = ride.event?.title?.takeIf { it.isNotBlank() }

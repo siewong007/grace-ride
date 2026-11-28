@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -68,6 +71,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TimePickerLayoutType
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
@@ -88,10 +92,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.pjstatecm.graceride.ui.components.LocationPinPickerSheet
 import org.pjstatecm.graceride.ui.theme.tabular
@@ -213,10 +219,14 @@ fun RideNewScreen(
                             .fillMaxWidth()
                             .navigationBarsPadding()
                             .imePadding(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Column(
-                            Modifier.fillMaxWidth().padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                            Modifier
+                                .widthIn(max = 720.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                         ) {
                             errMsg?.let {
@@ -267,15 +277,20 @@ fun RideNewScreen(
                     )
                 }
             }
-            else -> Column(
-                Modifier
+            else -> AdaptiveContentFrame(
+                modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(Spacing.sm),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    .padding(padding),
+                maxWidth = 720.dp,
             ) {
-                // 1. Linked Event Card
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(Spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                ) {
+                    // 1. Linked Event Card
                 s.event?.let { event ->
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Row(
@@ -871,6 +886,7 @@ fun RideNewScreen(
                         )
                     }
                 }
+                }
             }
         }
     }
@@ -900,7 +916,12 @@ fun RideNewScreen(
                 }) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = { TextButton(onClick = { showDate = false }) { Text(stringResource(R.string.common_cancel)) } },
-        ) { DatePicker(state = pickerState) }
+        ) {
+            DatePicker(
+                state = pickerState,
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            )
+        }
     }
     if (showTime) {
         TimePickerDialog(
@@ -929,7 +950,12 @@ fun RideNewScreen(
                 }) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = { TextButton(onClick = { showReturnDate = false }) { Text(stringResource(R.string.common_cancel)) } },
-        ) { DatePicker(state = pickerState) }
+        ) {
+            DatePicker(
+                state = pickerState,
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            )
+        }
     }
     if (showReturnTime) {
         TimePickerDialog(
@@ -943,7 +969,7 @@ fun RideNewScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TimePickerDialog(
+internal fun TimePickerDialog(
     title: String,
     initialHour: Int,
     initialMinute: Int,
@@ -953,8 +979,24 @@ private fun TimePickerDialog(
     val state = rememberTimePickerState(initialHour = initialHour, initialMinute = initialMinute, is24Hour = true)
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .padding(horizontal = Spacing.md)
+            .widthIn(max = 600.dp),
         title = { Text(title) },
-        text = { TimePicker(state = state) },
+        text = {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                contentAlignment = Alignment.Center,
+            ) {
+                TimePicker(
+                    state = state,
+                    layoutType = if (maxWidth < 520.dp) TimePickerLayoutType.Vertical else TimePickerLayoutType.Horizontal,
+                )
+            }
+        },
         confirmButton = { TextButton(onClick = { onConfirm(state.hour, state.minute) }) { Text(stringResource(R.string.common_confirm)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )

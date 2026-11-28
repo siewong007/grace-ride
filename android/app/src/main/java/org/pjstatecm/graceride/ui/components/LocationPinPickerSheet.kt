@@ -17,6 +17,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,8 +28,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
@@ -285,14 +288,21 @@ fun LocationPinPickerSheet(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = Spacing.sm)
-                .padding(bottom = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-        ) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val mapHeight = if (maxHeight.value.isFinite()) {
+                (maxHeight * 0.44f).coerceIn(190.dp, 330.dp)
+            } else {
+                280.dp
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = Spacing.sm)
+                    .padding(bottom = Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
             Text(
                 stringResource(R.string.pin_picker_title),
                 style = MaterialTheme.typography.titleMedium,
@@ -306,7 +316,7 @@ fun LocationPinPickerSheet(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(330.dp)
+                    .height(mapHeight)
                     .clip(RoundedCornerShape(16.dp))
                     .background(bgColor)
                     .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(16.dp))
@@ -526,6 +536,7 @@ fun LocationPinPickerSheet(
                     Text(stringResource(R.string.pin_picker_confirm))
                 }
             }
+        }
         }
     }
 }

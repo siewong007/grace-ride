@@ -92,6 +92,7 @@ import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -229,14 +230,18 @@ fun SettlementDetailScreen(
                         onRefresh = vm::refresh,
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .navigationBarsPadding()
-                                .padding(Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        AdaptiveContentFrame(
+                            modifier = Modifier.fillMaxSize(),
+                            maxWidth = 840.dp,
                         ) {
+                            Column(
+                                Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .navigationBarsPadding()
+                                    .padding(Spacing.sm),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            ) {
                             OutlinedCard(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                     Row(
@@ -565,6 +570,7 @@ fun SettlementDetailScreen(
                                 }
                             }
                         }
+                        }
                     }
                 }
             }
@@ -704,7 +710,10 @@ fun SettlementDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(Spacing.xs),
             ) {
                 Text(stringResource(R.string.settlement_revisions), style = MaterialTheme.typography.titleMedium)
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
                     items(state.revisions, key = { it.version }) { rev ->
                         OutlinedCard(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(2.dp)) {

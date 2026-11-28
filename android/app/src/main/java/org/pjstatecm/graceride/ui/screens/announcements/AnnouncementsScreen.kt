@@ -89,6 +89,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.GroupTree
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -300,16 +301,21 @@ fun AnnouncementsScreen(
                         onRefresh = { vm.refresh() },
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        LazyColumn(
-                            Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(
-                                start = Spacing.sm,
-                                end = Spacing.sm,
-                                top = Spacing.xs,
-                                bottom = if (canCreate) 88.dp else Spacing.lg,
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        AdaptiveContentFrame(
+                            maxWidth = 920.dp,
+                            compactHorizontalPadding = 0.dp,
+                            modifier = Modifier.fillMaxSize(),
                         ) {
+                            LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(
+                                    start = Spacing.sm,
+                                    end = Spacing.sm,
+                                    top = Spacing.xs,
+                                    bottom = if (canCreate) 88.dp else Spacing.lg,
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            ) {
                             if (filtered.isEmpty()) {
                                 item {
                                     EmptyView(
@@ -343,6 +349,7 @@ fun AnnouncementsScreen(
                                         onDelete = { deletingItem = ann },
                                     )
                                 }
+                            }
                             }
                         }
                     }

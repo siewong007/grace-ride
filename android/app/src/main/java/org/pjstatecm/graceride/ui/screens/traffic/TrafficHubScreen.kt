@@ -93,6 +93,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.pluralStringResource
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptivePairRow
+import org.pjstatecm.graceride.ui.components.AdaptiveTabRow
+import org.pjstatecm.graceride.ui.components.AdaptiveTwoColumnRow
+import org.pjstatecm.graceride.ui.components.NotificationBellButton
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -161,6 +167,7 @@ fun TrafficHubScreen(
     initialPlanFilter: String? = null,
 ) {
     val vm: TrafficHubViewModel = viewModel(
+        key = "traffic-$initialTab-$initialRidesView-$initialAreaTab-${initialRidesStatus.orEmpty()}-$initialRidesAttention-${initialPlanFilter.orEmpty()}",
         factory = TrafficHubViewModel.factory(
             container = container,
             initialTab = initialTab,
@@ -261,21 +268,17 @@ fun TrafficHubScreen(
                     IconButton(onClick = { vm.refreshActive(silent = false) }) {
                         Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
-                    IconButton(onClick = { nav.navigate(AppRoute.Notifications) }) {
-                        BadgedBox(
-                            badge = {
-                                if (unread > 0) Badge { Text(if (unread > 99) "99+" else unread.toString()) }
-                            },
-                        ) {
-                            Icon(Icons.Outlined.Notifications, contentDescription = stringResource(R.string.notif_title))
-                        }
-                    }
+                    NotificationBellButton(
+                        unreadCount = unread,
+                        onClick = { nav.navigate(AppRoute.Notifications) },
+                        contentDescription = stringResource(R.string.notif_title),
+                    )
                 }
             }
 
             if (permittedTabs.isNotEmpty()) {
                 val selectedIdx = permittedTabs.indexOfFirst { it.first == state.tab }.coerceAtLeast(0)
-                PrimaryScrollableTabRow(selectedTabIndex = selectedIdx, edgePadding = Spacing.sm) {
+                AdaptiveTabRow(selectedTabIndex = selectedIdx, scrollableBelow = 520.dp, edgePadding = Spacing.sm) {
                     permittedTabs.forEach { (key, labelRes) ->
                         val count = when (key) {
                             "plans" -> plansBadge
@@ -385,35 +388,37 @@ fun TrafficHubScreen(
                 }
             }
 
-            AnimatedContent(
-                targetState = state.tab,
-                transitionSpec = {
-                    if (animatorsEnabled()) {
-                        val fromIdx = permittedTabs.indexOfFirst { it.first == initialState }
-                        val toIdx = permittedTabs.indexOfFirst { it.first == targetState }
-                        val dir = if (fromIdx != -1 && toIdx != -1 && toIdx != fromIdx) {
-                            if (toIdx > fromIdx) 1 else -1
+            AdaptiveContentFrame(maxWidth = 920.dp, compactHorizontalPadding = 0.dp, modifier = Modifier.weight(1f)) {
+                AnimatedContent(
+                    targetState = state.tab,
+                    transitionSpec = {
+                        if (animatorsEnabled()) {
+                            val fromIdx = permittedTabs.indexOfFirst { it.first == initialState }
+                            val toIdx = permittedTabs.indexOfFirst { it.first == targetState }
+                            val dir = if (fromIdx != -1 && toIdx != -1 && toIdx != fromIdx) {
+                                if (toIdx > fromIdx) 1 else -1
+                            } else {
+                                1
+                            }
+                            (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
+                                fadeIn(tween(180)))
+                                .togetherWith(
+                                    slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
+                                        fadeOut(tween(140)),
+                                )
                         } else {
-                            1
+                            fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
                         }
-                        (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
-                            fadeIn(tween(180)))
-                            .togetherWith(
-                                slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
-                                    fadeOut(tween(140)),
-                            )
-                    } else {
-                        fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                    },
+                    label = "traffic_hub_tab",
+                    modifier = Modifier.fillMaxSize(),
+                ) { activeTab ->
+                    when (activeTab) {
+                        "plans" -> TrafficPlansTab(state, currentMe, vm, nav, bottomClearance)
+                        "rides" -> TrafficRidesTab(state, currentMe, vm, nav, bottomClearance)
+                        "live" -> TrafficLiveTab(state, vm, bottomClearance)
+                        "areas" -> TrafficAreasSection(state, currentMe, vm, container::fileUrl, bottomClearance)
                     }
-                },
-                label = "traffic_hub_tab",
-                modifier = Modifier.weight(1f),
-            ) { activeTab ->
-                when (activeTab) {
-                    "plans" -> TrafficPlansTab(state, currentMe, vm, nav, bottomClearance)
-                    "rides" -> TrafficRidesTab(state, currentMe, vm, nav, bottomClearance)
-                    "live" -> TrafficLiveTab(state, vm, bottomClearance)
-                    "areas" -> TrafficAreasSection(state, currentMe, vm, container::fileUrl, bottomClearance)
                 }
             }
         }
@@ -775,7 +780,11 @@ private fun TrafficPlanEventCard(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SmallBadgePill(
-                    stringResource(R.string.traffic_plan_rides_count, event.rideCount),
+                    pluralStringResource(
+                        R.plurals.traffic_plan_rides_count_plural,
+                        event.rideCount.toInt(),
+                        event.rideCount.toInt(),
+                    ),
                     MaterialTheme.colorScheme.surfaceVariant,
                     MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1160,16 +1169,18 @@ private fun TrafficRidesTab(
                                 onRefresh = { vm.refreshActive(silent = false) },
                                 modifier = Modifier.fillMaxSize(),
                             ) {
-                                LazyColumn(
-                                    Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(
-                                        start = Spacing.sm,
-                                        end = Spacing.sm,
-                                        top = Spacing.xxs,
-                                        bottom = (if (hasBatchBar) 88.dp else Spacing.lg) + bottomClearance,
-                                    ),
-                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                ) {
+                                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                                    val useTwoCols = maxWidth >= 640.dp
+                                    LazyColumn(
+                                        Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(
+                                            start = Spacing.sm,
+                                            end = Spacing.sm,
+                                            top = Spacing.xxs,
+                                            bottom = (if (hasBatchBar) 88.dp else Spacing.lg) + bottomClearance,
+                                        ),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
                                     if (activeFilterCount > 0 || approvableOnPage.isNotEmpty()) {
                                         item {
                                             LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -1240,19 +1251,59 @@ private fun TrafficRidesTab(
                                             )
                                         }
                                     } else {
-                                        items(rides, key = { "admin-ride-${it.id}" }) { ride ->
-                                            val approvable = canUpdateRides && ride.status == "pending_approval"
-                                            AdminRideCard(
-                                                ride = ride,
-                                                approvable = approvable,
-                                                selected = ride.id in state.selectedRideIds,
-                                                quickApproving = state.quickApprovingRideId == ride.id,
-                                                actionsEnabled = !state.batchBusy && state.quickApprovingRideId == null,
-                                                modifier = Modifier.animateItem(),
-                                                onToggleSelect = { vm.toggleSelectRide(ride.id) },
-                                                onQuickApprove = { vm.quickApproveRide(ride.id) },
-                                                onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
-                                            )
+                                        if (useTwoCols) {
+                                            val chunkedRides = rides.chunked(2)
+                                            items(chunkedRides, key = { pair -> "admin-ride-pair-${pair.joinToString("-") { it.id.toString() }}" }) { pair ->
+                                                AdaptivePairRow(
+                                                    spacing = Spacing.xs,
+                                                    left = {
+                                                        val ride = pair[0]
+                                                        val approvable = canUpdateRides && ride.status == "pending_approval"
+                                                        AdminRideCard(
+                                                            ride = ride,
+                                                            approvable = approvable,
+                                                            selected = ride.id in state.selectedRideIds,
+                                                            quickApproving = state.quickApprovingRideId == ride.id,
+                                                            actionsEnabled = !state.batchBusy && state.quickApprovingRideId == null,
+                                                            modifier = Modifier.animateItem(),
+                                                            onToggleSelect = { vm.toggleSelectRide(ride.id) },
+                                                            onQuickApprove = { vm.quickApproveRide(ride.id) },
+                                                            onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                                        )
+                                                    },
+                                                    right = pair.getOrNull(1)?.let { rightRide ->
+                                                        {
+                                                            val approvable = canUpdateRides && rightRide.status == "pending_approval"
+                                                            AdminRideCard(
+                                                                ride = rightRide,
+                                                                approvable = approvable,
+                                                                selected = rightRide.id in state.selectedRideIds,
+                                                                quickApproving = state.quickApprovingRideId == rightRide.id,
+                                                                actionsEnabled = !state.batchBusy && state.quickApprovingRideId == null,
+                                                                modifier = Modifier.animateItem(),
+                                                                onToggleSelect = { vm.toggleSelectRide(rightRide.id) },
+                                                                onQuickApprove = { vm.quickApproveRide(rightRide.id) },
+                                                                onClick = { nav.navigate(AppRoute.RideDetail(rightRide.id)) },
+                                                            )
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        } else {
+                                            items(rides, key = { "admin-ride-${it.id}" }) { ride ->
+                                                val approvable = canUpdateRides && ride.status == "pending_approval"
+                                                AdminRideCard(
+                                                    ride = ride,
+                                                    approvable = approvable,
+                                                    selected = ride.id in state.selectedRideIds,
+                                                    quickApproving = state.quickApprovingRideId == ride.id,
+                                                    actionsEnabled = !state.batchBusy && state.quickApprovingRideId == null,
+                                                    modifier = Modifier.animateItem(),
+                                                    onToggleSelect = { vm.toggleSelectRide(ride.id) },
+                                                    onQuickApprove = { vm.quickApproveRide(ride.id) },
+                                                    onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                                )
+                                            }
                                         }
 
                                         if (state.ridesPage.totalPages > 1) {
@@ -1283,6 +1334,7 @@ private fun TrafficRidesTab(
                                             }
                                         }
                                     }
+                                }
                                 }
                             }
                         }
@@ -1402,8 +1454,22 @@ private fun AdminRideCard(
 ) {
     val c = LocalStatusColors.current
     val riderDisplay = when {
-        ride.isProxy && !ride.proxy?.riderName.isNullOrBlank() ->
-            "${ride.proxy!!.riderName} (${ride.passenger.name})"
+        ride.isProxy && !ride.proxy?.riderName.isNullOrBlank() -> {
+            val rider = ride.proxy!!.riderName.trim()
+            val booker = ride.proxy.bookerName
+                ?.trim()
+                ?.takeIf {
+                    it.isNotEmpty() &&
+                        !it.equals(rider, ignoreCase = true) &&
+                        !rider.contains(it, ignoreCase = true)
+                }
+            if (booker != null) {
+                "$rider ($booker)"
+            } else {
+                val pName = ride.passenger.name.trim()
+                if (pName.contains(rider, ignoreCase = true)) pName else rider
+            }
+        }
         else -> ride.passenger.name
     }
     OutlinedCard(
@@ -1664,7 +1730,7 @@ internal fun ReturnNotesDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.plan_action_return)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 if (quickReasons.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         quickReasons.forEach { reason ->
@@ -1840,7 +1906,10 @@ private fun LiveDriverCard(
                 if (isStale) {
                     StatusPill(stringResource(R.string.traffic_live_stale), RideStatusKind.PENDING)
                 } else {
-                    StatusPill(stringResource(R.string.traffic_live_trips, driver.rides), RideStatusKind.ACTIVE)
+                    StatusPill(
+                        pluralStringResource(R.plurals.traffic_live_trips_plural, driver.rides.toInt(), driver.rides),
+                        RideStatusKind.ACTIVE,
+                    )
                 }
             }
             driver.firstPickup?.let { first ->

@@ -20,8 +20,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.pjstatecm.graceride.data.api.AdminDriverDto
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Area
+import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.data.api.AuthEvent
 import org.pjstatecm.graceride.data.api.DraftVisitorEntryDto
 import org.pjstatecm.graceride.data.api.PlanDraftEntryDto
@@ -494,5 +496,28 @@ class TrafficAdminAndDraftsTest {
         val completedActions = legalRideDraftActions(completedRide)
         assertEquals(listOf("reimbursement_excluded"), completedActions)
         assertTrue("cancel" in legalRideDraftActions(completedRide, includeAction = "cancel"))
+    }
+
+    @Test
+    fun adminDriverDtoDecodesAreasStringArrayAndNull() {
+        val fromCsv = apiJson.decodeFromString<AdminDriverDto>(
+            """{"id":4,"name":"李德明","carpool_enabled":true,"spare_seats":2,"areas":"八打灵再也 PJ, 白沙罗，Kelana Jaya"}""",
+        )
+        assertEquals(listOf("八打灵再也 PJ", "白沙罗", "Kelana Jaya"), fromCsv.areas)
+
+        val fromBlank = apiJson.decodeFromString<AdminDriverDto>(
+            """{"id":5,"name":"吴志强","areas":"  "}""",
+        )
+        assertTrue(fromBlank.areas.isEmpty())
+
+        val fromNull = apiJson.decodeFromString<AdminDriverDto>(
+            """{"id":6,"name":"张家乐","areas":null}""",
+        )
+        assertTrue(fromNull.areas.isEmpty())
+
+        val fromArray = apiJson.decodeFromString<AdminDriverDto>(
+            """{"id":7,"name":"陈国荣","areas":["PJ", " KL ", ""]}""",
+        )
+        assertEquals(listOf("PJ", "KL"), fromArray.areas)
     }
 }

@@ -53,7 +53,7 @@ struct ReimbRow {
 }
 
 const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_id, rd.pickup_at AS ride_at, r.kind,
-    (SELECT pa.name || ' ↔ ' || COALESCE(ea.name, '?') FROM areas pa LEFT JOIN events ev ON ev.id = rd.event_id LEFT JOIN areas ea ON ea.id = ev.area_id WHERE pa.id = rd.pickup_area_id) AS ride_route,
+    CASE WHEN pa.id IS NOT NULL THEN pa.name || ' ↔ ' || COALESCE(ea.name, '?') END AS ride_route,
     COALESCE(r.event_id, rd.event_id) AS event_id, ev.title AS event_title, ev.starts_at AS event_starts_at,
     r.amount_cents, r.description,
     r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at, r.updated_at,
@@ -61,7 +61,9 @@ const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_
     FROM reimbursements r
     JOIN users u ON u.id=r.user_id
     LEFT JOIN rides rd ON rd.id=r.ride_id
+    LEFT JOIN areas pa ON pa.id=rd.pickup_area_id
     LEFT JOIN events ev ON ev.id = COALESCE(r.event_id, rd.event_id)
+    LEFT JOIN areas ea ON ea.id = ev.area_id
     LEFT JOIN users rv ON rv.id=r.reviewed_by
     LEFT JOIN plan_visitors pv ON pv.id=r.plan_visitor_id
     LEFT JOIN users rq ON rq.id=r.requested_by";
@@ -115,20 +117,25 @@ pub(super) async fn list_reimbursements(
     u: CurrentUser,
     Query(q): Query<ReimbQuery>,
 ) -> AppResult<Json<Value>> {
-    let (permission, scope_filter, default_order, unpaginated_limit) = match q.scope.as_deref() {
+    enum ReimbScope {
+        Mine,
+        Review,
+        Payout,
+    }
+    let (permission, scope_kind, default_order, unpaginated_limit) = match q.scope.as_deref() {
         Some("review") => (
             Page::AdminReimbReview,
-            "TRUE",
+            ReimbScope::Review,
             "CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC",
             200,
         ),
         Some("payout") => (
             Page::AdminReimbPay,
-            "r.status IN ('approved','paid')",
+            ReimbScope::Payout,
             "CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC",
             200,
         ),
-        _ => (Page::Reimbursements, "r.user_id = $1", "r.id DESC", 100),
+        _ => (Page::Reimbursements, ReimbScope::Mine, "r.id DESC", 100),
     };
     require(&u, permission, Act::View)?;
 
@@ -154,40 +161,95 @@ pub(super) async fn list_reimbursements(
             .map(like_pattern);
     let status = q.status.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let finance = u.can(Page::AdminReimbPay, Act::View);
-    // Payee-name matches follow the same per-claim visibility as reimb_json.
-    let where_sql = format!(
-        "WHERE {scope_filter}
-         AND ($3::text IS NULL OR u.name ILIKE $3 ESCAPE '\\' OR r.description ILIKE $3 ESCAPE '\\'
-              OR (($2 OR r.user_id = $1) AND r.payee_name ILIKE $3 ESCAPE '\\'))
-         AND ($4::text IS NULL OR r.status = $4)"
-    );
+
+    enum BindVal<'a> {
+        I64(i64),
+        Str(&'a str),
+    }
+    let mut conds: Vec<String> = Vec::new();
+    let mut params: Vec<BindVal<'_>> = Vec::new();
+
+    match scope_kind {
+        ReimbScope::Review => {}
+        ReimbScope::Payout => conds.push("r.status IN ('approved','paid')".to_string()),
+        ReimbScope::Mine => {
+            params.push(BindVal::I64(u.id));
+            conds.push(format!("r.user_id = ${}", params.len()));
+        }
+    }
+    if let Some(st_val) = status {
+        params.push(BindVal::Str(st_val));
+        conds.push(format!("r.status = ${}", params.len()));
+    }
+    if let Some(s) = search.as_deref() {
+        params.push(BindVal::Str(s));
+        let p_idx = params.len();
+        if finance || matches!(scope_kind, ReimbScope::Mine) {
+            conds.push(format!(
+                "(u.name ILIKE ${p_idx} ESCAPE '\\' OR r.description ILIKE ${p_idx} ESCAPE '\\' OR r.payee_name ILIKE ${p_idx} ESCAPE '\\')"
+            ));
+        } else {
+            params.push(BindVal::I64(u.id));
+            let u_idx = params.len();
+            conds.push(format!(
+                "(u.name ILIKE ${p_idx} ESCAPE '\\' OR r.description ILIKE ${p_idx} ESCAPE '\\' OR (r.user_id = ${u_idx} AND r.payee_name ILIKE ${p_idx} ESCAPE '\\'))"
+            ));
+        }
+    }
+    let where_sql = if conds.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conds.join(" AND "))
+    };
+    let need_u_filter = search.is_some();
+    let need_u_sort = q.sort.as_deref() == Some("applicant");
+    let count_join = if need_u_filter {
+        " JOIN users u ON u.id=r.user_id"
+    } else {
+        ""
+    };
+    let page_join = if need_u_filter || need_u_sort {
+        " JOIN users u ON u.id=r.user_id"
+    } else {
+        ""
+    };
+
     let total = if is_paginated {
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM reimbursements r JOIN users u ON u.id=r.user_id {where_sql}"
-        );
-        Some(
-            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*count_sql))
-                .bind(u.id)
-                .bind(finance)
-                .bind(search.as_deref())
-                .bind(status)
-                .fetch_one(&st.db)
-                .await?,
-        )
+        let count_sql = format!("SELECT COUNT(*) FROM reimbursements r{count_join} {where_sql}");
+        let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*count_sql));
+        for p in &params {
+            cq = match p {
+                BindVal::I64(v) => cq.bind(*v),
+                BindVal::Str(v) => cq.bind(*v),
+            };
+        }
+        Some(cq.fetch_one(&st.db).await?)
     } else {
         None
     };
 
-    let sql = format!("{REIMB_SELECT} {where_sql} ORDER BY {order} LIMIT $5 OFFSET $6");
-    let rows = sqlx::query_as::<_, ReimbRow>(sqlx::AssertSqlSafe(&*sql))
-        .bind(u.id)
-        .bind(finance)
-        .bind(search.as_deref())
-        .bind(status)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&st.db)
-        .await?;
+    let lim_p = params.len() + 1;
+    let off_p = params.len() + 2;
+    let sql = format!(
+        "WITH page_ids AS MATERIALIZED (
+             SELECT r.id, ROW_NUMBER() OVER () AS _ord
+             FROM (
+                 SELECT r.id FROM reimbursements r{page_join} {where_sql} ORDER BY {order} LIMIT ${lim_p} OFFSET ${off_p}
+             ) r
+         )
+         {REIMB_SELECT}
+         JOIN page_ids pid ON pid.id = r.id
+         WHERE r.id IN (SELECT id FROM page_ids)
+         ORDER BY pid._ord"
+    );
+    let mut query = sqlx::query_as::<_, ReimbRow>(sqlx::AssertSqlSafe(&*sql));
+    for p in &params {
+        query = match p {
+            BindVal::I64(v) => query.bind(*v),
+            BindVal::Str(v) => query.bind(*v),
+        };
+    }
+    let rows = query.bind(limit).bind(offset).fetch_all(&st.db).await?;
     let items = rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>();
     if let Some(total) = total {
         let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;

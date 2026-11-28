@@ -96,6 +96,7 @@ import org.pjstatecm.graceride.ui.components.LocationPinPickerSheet
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.inferAreaId
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -197,11 +198,15 @@ fun SavedAddressesScreen(container: AppContainer, nav: NavHostController) {
                 onRefresh = vm::refresh,
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                    contentPadding = PaddingValues(vertical = Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                AdaptiveContentFrame(
+                    modifier = Modifier.fillMaxSize(),
+                    maxWidth = 720.dp,
                 ) {
+                    LazyColumn(
+                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                        contentPadding = PaddingValues(vertical = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
                     item {
                         OutlinedCard(Modifier.fillMaxWidth()) {
                             Column {
@@ -231,6 +236,7 @@ fun SavedAddressesScreen(container: AppContainer, nav: NavHostController) {
                         item {
                             Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                         }
+                    }
                     }
                 }
             }

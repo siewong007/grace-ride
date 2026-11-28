@@ -469,6 +469,33 @@ describe('RideNew page', () => {
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(screen.getByDisplayValue('Uncle Tan')).toBeInTheDocument();
   });
+
+  it('clamps default pickup time forward when an upcoming event starts within 40 minutes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 28, 14, 0, 0));
+    mockApiData['/events/99'] = {
+      id: 99,
+      title: 'Soon Fellowship',
+      kind: 'service',
+      location: 'Main Hall',
+      starts_at: '2026-11-28T14:20:00',
+      my_signup: { status: 'going' },
+    };
+    try {
+      render(
+        <MemoryRouter initialEntries={['/rides/new?event=99']}>
+          <RideNew />
+        </MemoryRouter>
+      );
+      const dateInput = document.getElementById('field-date') as HTMLInputElement;
+      const timeInput = document.getElementById('field-time') as HTMLInputElement;
+      expect(dateInput.value).toBe('2026-11-28');
+      expect(timeInput.value).toBe('14:05');
+    } finally {
+      delete mockApiData['/events/99'];
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('RideDetail page', () => {

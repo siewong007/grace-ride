@@ -83,6 +83,7 @@ import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.LocalBottomBarClearance
 import org.pjstatecm.graceride.ui.NavProvider
 import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.GrokBotSpec
 import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.SectionHeader
@@ -210,11 +211,16 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(bottom = bottomClearance)) },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-            contentPadding = PaddingValues(top = Spacing.sm, bottom = Spacing.sm + bottomClearance),
+        AdaptiveContentFrame(
+            maxWidth = 840.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                contentPadding = PaddingValues(top = Spacing.sm, bottom = Spacing.sm + bottomClearance),
+            ) {
             // 1. Identity Header Card
             item {
                 OutlinedCard(
@@ -552,6 +558,7 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                     Text(stringResource(R.string.profile_logout))
                 }
             }
+        }
         }
     }
 

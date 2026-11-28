@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -117,12 +118,13 @@ fun LicensesScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = Spacing.sm),
+            horizontalAlignment = Alignment.CenterHorizontally,
             contentPadding = PaddingValues(vertical = Spacing.sm),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             item {
                 OutlinedCard(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth(),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Column(
@@ -167,7 +169,7 @@ fun LicensesScreen(
                             null
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth(),
                     )
                 }
             }
@@ -189,7 +191,7 @@ fun LicensesScreen(
                     val key = "${pkg.name}@${pkg.version}"
                     val isExpanded = expandedKey == key
                     OutlinedCard(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth(),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
                         Surface(

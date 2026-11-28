@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.pjstatecm.graceride.R
@@ -95,6 +97,10 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Column(
+            Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         GraceRideBrandMark(
             modifier = Modifier.size(104.dp),
             mode = BrandMarkMode.IDLE_HOP,
@@ -306,6 +312,7 @@ fun LoginScreen(
                 Text(stringResource(R.string.login_licenses_link))
             }
         }
+        }
     }
 
     if (state.recoveryOpen) {
@@ -317,6 +324,8 @@ fun LoginScreen(
         val recErr = state.recoveryError ?: state.recoveryErrorRes?.let { stringResource(it) }
         AlertDialog(
             onDismissRequest = vm::closeRecovery,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier.padding(horizontal = Spacing.md).widthIn(max = 460.dp),
             title = {
                 Text(
                     if (state.recoverySent) {
@@ -333,7 +342,10 @@ fun LoginScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Column(
+                        Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
                         Text(
                             stringResource(R.string.login_recovery_hint),
                             style = MaterialTheme.typography.bodySmall,
@@ -350,7 +362,10 @@ fun LoginScreen(
                             ),
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             presets.forEach { preset ->
                                 FilterChip(
                                     selected = state.recoveryReason.trim() == preset,

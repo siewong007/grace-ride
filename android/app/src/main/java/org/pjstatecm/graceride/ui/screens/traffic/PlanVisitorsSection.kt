@@ -379,7 +379,7 @@ internal fun SpecialReimbursementDialog(
         onDismissRequest = onDismiss,
         title = { Text("${stringResource(R.string.plan_special_reimb_title)} · ${visitor.name}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },

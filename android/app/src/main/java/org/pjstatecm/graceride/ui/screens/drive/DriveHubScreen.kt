@@ -47,7 +47,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -82,6 +81,8 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.service.LiveTripLocationService
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTabRow
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Sync
@@ -205,7 +206,7 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
                 modifier = Modifier.padding(padding),
             )
         } else Column(Modifier.fillMaxSize().padding(padding)) {
-            PrimaryTabRow(selectedTabIndex = state.tab) {
+            AdaptiveTabRow(selectedTabIndex = state.tab) {
                 Tab(
                     selected = state.tab == 0,
                     onClick = { UiHaptics.tick(view); vm.setTab(0) },
@@ -283,23 +284,28 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
                     onRefresh = vm::refresh,
                     modifier = Modifier.weight(1f),
                 ) {
-                    AnimatedContent(
-                        targetState = state.tab,
-                        transitionSpec = {
-                            if (animatorsEnabled()) {
-                                val dir = if (targetState > initialState) 1 else -1
-                                (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
-                                    fadeIn(tween(180)))
-                                    .togetherWith(
-                                        slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
-                                            fadeOut(tween(140)),
-                                    )
-                            } else {
-                                fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
-                            }
-                        },
-                        label = "drive_tab_content",
-                    ) { tab ->
+                    AdaptiveContentFrame(
+                        maxWidth = 920.dp,
+                        compactHorizontalPadding = 0.dp,
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        AnimatedContent(
+                            targetState = state.tab,
+                            transitionSpec = {
+                                if (animatorsEnabled()) {
+                                    val dir = if (targetState > initialState) 1 else -1
+                                    (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
+                                        fadeIn(tween(180)))
+                                        .togetherWith(
+                                            slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
+                                                fadeOut(tween(140)),
+                                        )
+                                } else {
+                                    fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                                }
+                            },
+                            label = "drive_tab_content",
+                        ) { tab ->
                         when (tab) {
                             0 -> RequestsTab(
                                 requests = state.requests,
@@ -348,6 +354,7 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
                                 onNavigate = smartNavigate,
                             )
                         }
+                    }
                     }
                 }
             }

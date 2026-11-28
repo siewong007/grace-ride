@@ -138,6 +138,7 @@ import org.pjstatecm.graceride.ui.NotifDestination
 import org.pjstatecm.graceride.ui.NotifLinkRouter
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.animatorsEnabled
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -841,11 +842,16 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                                 }
                             }
                         }
-                        else -> LazyColumn(
-                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            contentPadding = PaddingValues(top = Spacing.xs, bottom = Spacing.lg),
+                        else -> AdaptiveContentFrame(
+                            maxWidth = 920.dp,
+                            compactHorizontalPadding = 0.dp,
+                            modifier = Modifier.fillMaxSize(),
                         ) {
+                            LazyColumn(
+                                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                contentPadding = PaddingValues(top = Spacing.xs, bottom = Spacing.lg),
+                            ) {
                             val groups = listOf(
                                 Triple(R.string.notif_today, todayItems, true),
                                 Triple(R.string.notif_yesterday, yesterdayItems, true),
@@ -931,6 +937,7 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                                         }
                                     }
                                 }
+                            }
                             }
                         }
                     }

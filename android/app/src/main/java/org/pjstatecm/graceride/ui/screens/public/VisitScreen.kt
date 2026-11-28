@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -159,12 +160,13 @@ fun VisitScreen(
                         .fillMaxSize()
                         .padding(padding)
                         .padding(horizontal = Spacing.sm),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     contentPadding = PaddingValues(vertical = Spacing.sm),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     item {
                         OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         ) {
                             Column(
@@ -215,7 +217,7 @@ fun VisitScreen(
 
                     item {
                         OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         ) {
                             Column(
@@ -261,7 +263,7 @@ fun VisitScreen(
                     if (loc?.sharing == true && loc.lat != null && loc.lng != null) {
                         item {
                             OutlinedCard(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             ) {
                                 Column(
@@ -328,7 +330,7 @@ fun VisitScreen(
 
                     item {
                         OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         ) {
                             Column(
@@ -399,12 +401,13 @@ fun VisitScreen(
                         .fillMaxSize()
                         .padding(padding)
                         .padding(horizontal = Spacing.sm),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     contentPadding = PaddingValues(vertical = Spacing.md),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     item {
                         OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         ) {
                             Column(

@@ -78,7 +78,8 @@ export default function EventDetail() {
   const [joinAsMissing, setJoinAsMissing] = useState(false);
   const [showTransportPrompt, setShowTransportPrompt] = useState(false);
   const [showDriveRequests, setShowDriveRequests] = useState(() => searchParams.get('drive') === '1');
-  const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
+  const canSeeSignups = Boolean(id && e && (e.can_see_signups ?? e.can_manage));
+  const { data: signups, reload: reloadS } = useApi<Signup[]>(canSeeSignups ? `/events/${id}/signups` : null);
   const eventDay = e?.starts_at ? e.starts_at.slice(0, 10) : '';
   const shouldLoadDriverDay = Boolean(
     e && can('drive') && e.my_signup?.status === 'going' && eventDay,

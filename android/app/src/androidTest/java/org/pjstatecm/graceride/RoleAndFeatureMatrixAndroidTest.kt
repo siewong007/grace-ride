@@ -367,7 +367,7 @@ class RoleAndFeatureMatrixAndroidTest {
 
         compose.runOnIdle { screen = 4 }
         waitForText(res(R.string.readiness_unable))
-        compose.onNodeWithText(res(R.string.readiness_unable)).performClick()
+        compose.onNodeWithText(res(R.string.readiness_unable)).performScrollTo().performClick()
         waitForText(res(R.string.ride_unable_confirm_title))
         compose.onNodeWithText(res(R.string.common_cancel)).performClick()
 

@@ -80,6 +80,7 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.platform.CsvBuilder
 import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.BadgeIcon
 import org.pjstatecm.graceride.ui.components.BadgeIcons
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
@@ -241,14 +242,19 @@ fun AdminReportsScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     val statusColors = LocalStatusColors.current
-                    Column(
-                        Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .navigationBarsPadding()
-                            .padding(Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    AdaptiveContentFrame(
+                        maxWidth = 920.dp,
+                        compactHorizontalPadding = 0.dp,
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .navigationBarsPadding()
+                                .padding(Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        ) {
                         when (state.tab) {
                             "overview" -> state.overview?.let { ov ->
                                 ov.transport?.let { t ->
@@ -431,6 +437,7 @@ fun AdminReportsScreen(
                                 }
                             }
                         }
+                        }
                     }
                 }
             }
@@ -465,6 +472,7 @@ fun AdminReportsScreen(
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .weight(1f, fill = false)
                         .heightIn(max = 320.dp),
                 ) {
                     items(options, key = { it }) { key ->

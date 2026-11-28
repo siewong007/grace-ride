@@ -77,6 +77,7 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.platform.CsvBuilder
 import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.SectionHeader
@@ -128,12 +129,15 @@ fun ReportScreen(container: AppContainer, nav: NavHostController) {
             )
         },
     ) { padding ->
-        Column(
-            Modifier
+        AdaptiveContentFrame(
+            maxWidth = 920.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            PeriodSelectorBar(
+            Column(Modifier.fillMaxSize()) {
+                PeriodSelectorBar(
                 month = state.month,
                 range = state.range,
                 onShiftMonth = vm::shiftMonth,
@@ -196,6 +200,7 @@ fun ReportScreen(container: AppContainer, nav: NavHostController) {
                         }
                     }
                 }
+            }
             }
         }
     }

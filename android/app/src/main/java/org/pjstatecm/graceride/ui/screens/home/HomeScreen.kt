@@ -63,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -83,6 +84,8 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.LocalBottomBarClearance
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTwoColumnRow
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.BrandMarkMode
 import org.pjstatecm.graceride.ui.components.CalloutBanner
@@ -93,6 +96,7 @@ import org.pjstatecm.graceride.ui.components.GraceRideBrandMark
 import org.pjstatecm.graceride.ui.components.GraceRideWordmark
 import org.pjstatecm.graceride.ui.components.HomeSkeleton
 import org.pjstatecm.graceride.ui.components.MemberAvatar
+import org.pjstatecm.graceride.ui.components.NotificationBellButton
 import org.pjstatecm.graceride.ui.components.OnboardingChecklistCard
 import org.pjstatecm.graceride.ui.components.QuickJumpSheet
 import org.pjstatecm.graceride.ui.components.RideCard
@@ -159,11 +163,12 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                 )
                 PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh, modifier = Modifier.weight(1f)) {
                     val bottomClearance = LocalBottomBarClearance.current
-                    LazyColumn(
-                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                        contentPadding = PaddingValues(top = Spacing.sm, bottom = Spacing.sm + bottomClearance),
-                    ) {
+                    AdaptiveContentFrame(maxWidth = 920.dp, compactHorizontalPadding = 0.dp) {
+                        LazyColumn(
+                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            contentPadding = PaddingValues(top = Spacing.sm, bottom = Spacing.sm + bottomClearance),
+                        ) {
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                 Row(
@@ -209,27 +214,14 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                                 contentDescription = stringResource(R.string.quick_jump_title),
                                             )
                                         }
-                                        IconButton(
+                                        NotificationBellButton(
+                                            unreadCount = unreadCount,
                                             onClick = { nav.navigate(AppRoute.Notifications) },
+                                            contentDescription = stringResource(R.string.notif_title),
                                             modifier = Modifier.semantics {
                                                 if (unreadState != null) stateDescription = unreadState
                                             },
-                                        ) {
-                                            BadgedBox(
-                                                badge = {
-                                                    if (unreadCount > 0) {
-                                                        Badge {
-                                                            Text(if (unreadCount > 99) "99+" else unreadCount.toString())
-                                                        }
-                                                    }
-                                                },
-                                            ) {
-                                                Icon(
-                                                    Icons.Outlined.Notifications,
-                                                    contentDescription = stringResource(R.string.notif_title),
-                                                )
-                                            }
-                                        }
+                                        )
                                         Box(Modifier.clickable { nav.navigateTab(AppRoute.Profile) }) {
                                             MemberAvatar(
                                                 name = me?.name ?: "",
@@ -525,7 +517,7 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                                         contentColor = statusColors.warning,
                                                     ) {
                                                         Text(
-                                                            stringResource(R.string.home_admin_pending_members, stats.pendingMembers),
+                                                            pluralStringResource(R.plurals.home_admin_pending_members_plural, stats.pendingMembers.toInt(), stats.pendingMembers),
                                                             style = MaterialTheme.typography.labelMedium,
                                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                                         )
@@ -591,32 +583,64 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
 
-                        state.nextRide?.let { ride ->
-                            item { SectionHeader(stringResource(R.string.home_next_ride)) }
+                        val nextRideItem = state.nextRide
+                        if (nextRideItem != null && state.unpaidShares.isNotEmpty()) {
+                            val ride = nextRideItem
                             item {
-                                NextRideHeroCard(
-                                    ride = ride,
-                                    container = container,
-                                    onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                AdaptiveTwoColumnRow(
+                                    twoColumnBreakpoint = 680.dp,
+                                    first = {
+                                        SectionHeader(stringResource(R.string.home_next_ride))
+                                        NextRideHeroCard(
+                                            ride = ride,
+                                            container = container,
+                                            onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                        )
+                                    },
+                                    second = {
+                                        SectionHeader(
+                                            title = stringResource(R.string.home_unpaid_shares),
+                                            actionText = stringResource(R.string.home_view_all),
+                                            count = state.unpaidShareCount,
+                                        ) { nav.navigate(AppRoute.Costs) }
+                                        state.unpaidShares.forEach { share ->
+                                            ShareCard(
+                                                share,
+                                                canPay = state.me?.can("costs", "update") == true,
+                                                onPay = { nav.navigate(AppRoute.Costs) },
+                                            )
+                                        }
+                                    },
                                 )
                             }
-                        }
+                        } else {
+                            state.nextRide?.let { ride ->
+                                item { SectionHeader(stringResource(R.string.home_next_ride)) }
+                                item {
+                                    NextRideHeroCard(
+                                        ride = ride,
+                                        container = container,
+                                        onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
+                                    )
+                                }
+                            }
 
-                        if (state.unpaidShares.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = stringResource(R.string.home_unpaid_shares),
-                                    actionText = stringResource(R.string.home_view_all),
-                                    count = state.unpaidShareCount,
-                                ) { nav.navigate(AppRoute.Costs) }
-                            }
-                            items(state.unpaidShares, key = { "share-${it.id}" }) { share ->
-                                ShareCard(
-                                    share,
-                                    canPay = state.me?.can("costs", "update") == true,
-                                    onPay = { nav.navigate(AppRoute.Costs) },
-                                    modifier = Modifier.animateItem(),
-                                )
+                            if (state.unpaidShares.isNotEmpty()) {
+                                item {
+                                    SectionHeader(
+                                        title = stringResource(R.string.home_unpaid_shares),
+                                        actionText = stringResource(R.string.home_view_all),
+                                        count = state.unpaidShareCount,
+                                    ) { nav.navigate(AppRoute.Costs) }
+                                }
+                                items(state.unpaidShares, key = { "share-${it.id}" }) { share ->
+                                    ShareCard(
+                                        share,
+                                        canPay = state.me?.can("costs", "update") == true,
+                                        onPay = { nav.navigate(AppRoute.Costs) },
+                                        modifier = Modifier.animateItem(),
+                                    )
+                                }
                             }
                         }
 
@@ -789,6 +813,7 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                     onAction = if (me?.can("events", "view") == true) { { nav.navigateTab(AppRoute.Events) } } else null,
                                 )
                             }
+                        }
                         }
                     }
                 }

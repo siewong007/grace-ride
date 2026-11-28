@@ -84,6 +84,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.NavProvider
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -184,11 +185,15 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
                 onRefresh = vm::refresh,
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                    contentPadding = PaddingValues(vertical = Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                AdaptiveContentFrame(
+                    modifier = Modifier.fillMaxSize(),
+                    maxWidth = 720.dp,
                 ) {
+                    LazyColumn(
+                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                        contentPadding = PaddingValues(vertical = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
                     item { SectionHeader(stringResource(R.string.driver_vehicles_title)) }
                     item {
                         OutlinedCard(Modifier.fillMaxWidth()) {
@@ -515,6 +520,7 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
                     }
+                }
                 }
             }
         }

@@ -538,6 +538,7 @@ private fun StaffDriverPickerSheet(
                 currentDriverId = currentDriverId,
                 rideAreaName = rideAreaName,
                 onSelect = onSelect,
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
     }

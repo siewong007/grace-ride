@@ -130,54 +130,114 @@ pub(super) async fn audit_log(
     let action = q.action.filter(|a| !a.is_empty());
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
-    let sql = format!(
-        "WITH paged AS (
-             SELECT a.id, a.actor_id, u.name AS actor_name, a.action, a.entity, a.entity_id,
-                    a.entity_name, a.detail, a.created_at
-             FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-             WHERE ($1::text IS NULL OR a.entity = $1)
-               AND ($2::bigint IS NULL OR a.entity_id = $2)
-               AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR a.entity_name ILIKE $3 ESCAPE '\\'
-                    OR (a.entity = 'guide_workflow' AND EXISTS (SELECT 1 FROM guide_workflows gw WHERE gw.id = a.entity_id AND (gw.title_zh ILIKE $3 ESCAPE '\\' OR gw.title_en ILIKE $3 ESCAPE '\\'))))
-               AND ($4::text IS NULL OR a.created_at >= $4)
-               AND ($5::text IS NULL OR a.created_at < $5)
-               AND ($6::bigint IS NULL OR a.id < $6)
-               AND ($7::text IS NULL OR a.action = $7)
-               AND ($8::bigint IS NULL OR a.actor_id = $8)
-             ORDER BY a.id DESC LIMIT $9
-         )
-         SELECT paged.id, paged.actor_id, paged.actor_name, paged.action, paged.entity, paged.entity_id,
-                {name},
-                CASE WHEN paged.entity = 'ride' THEN (SELECT pickup_at FROM rides WHERE id = paged.entity_id) END,
-                paged.detail, paged.created_at
-         FROM paged
-         ORDER BY paged.id DESC",
-        name = audit_name_sql(u.lang, "paged"),
-    );
+
+    enum BindVal<'a> {
+        I64(i64),
+        Str(&'a str),
+    }
+    let mut conds: Vec<String> = Vec::new();
+    let mut params: Vec<BindVal<'_>> = Vec::new();
+    if let Some(e) = entity.as_deref() {
+        params.push(BindVal::Str(e));
+        conds.push(format!("a.entity = ${}", params.len()));
+    }
+    if let Some(eid) = q.entity_id {
+        params.push(BindVal::I64(eid));
+        conds.push(format!("a.entity_id = ${}", params.len()));
+    }
+    if let Some(l) = like.as_deref() {
+        params.push(BindVal::Str(l));
+        let p = params.len();
+        conds.push(format!(
+            "(a.action ILIKE ${p} ESCAPE '\\' OR a.entity ILIKE ${p} ESCAPE '\\' OR a.detail ILIKE ${p} ESCAPE '\\' OR u.name ILIKE ${p} ESCAPE '\\' OR a.entity_name ILIKE ${p} ESCAPE '\\'
+              OR (a.entity = 'guide_workflow' AND EXISTS (SELECT 1 FROM guide_workflows gw WHERE gw.id = a.entity_id AND (gw.title_zh ILIKE ${p} ESCAPE '\\' OR gw.title_en ILIKE ${p} ESCAPE '\\'))))"
+        ));
+    }
+    if let Some(f) = from.as_deref() {
+        params.push(BindVal::Str(f));
+        conds.push(format!("a.created_at >= ${}", params.len()));
+    }
+    if let Some(u_day) = until.as_deref() {
+        params.push(BindVal::Str(u_day));
+        conds.push(format!("a.created_at < ${}", params.len()));
+    }
+    if let Some(b) = q.before {
+        params.push(BindVal::I64(b));
+        conds.push(format!("a.id < ${}", params.len()));
+    }
+    if let Some(act) = action.as_deref() {
+        params.push(BindVal::Str(act));
+        conds.push(format!("a.action = ${}", params.len()));
+    }
+    if let Some(aid) = q.actor_id {
+        params.push(BindVal::I64(aid));
+        conds.push(format!("a.actor_id = ${}", params.len()));
+    }
+    let where_sql = if conds.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conds.join(" AND "))
+    };
+    let lim_p = params.len() + 1;
+    let sql = if like.is_some() {
+        format!(
+            "WITH paged AS (
+                 SELECT a.id, a.actor_id, u.name AS actor_name, a.action, a.entity, a.entity_id,
+                        a.entity_name, a.detail, a.created_at
+                 FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+                 {where_sql}
+                 ORDER BY a.id DESC LIMIT ${lim_p}
+             )
+             SELECT paged.id, paged.actor_id, paged.actor_name, paged.action, paged.entity, paged.entity_id,
+                    {name},
+                    CASE WHEN paged.entity = 'ride' THEN (SELECT pickup_at FROM rides WHERE id = paged.entity_id) END,
+                    paged.detail, paged.created_at
+             FROM paged
+             ORDER BY paged.id DESC",
+            name = audit_name_sql(u.lang, "paged"),
+        )
+    } else {
+        format!(
+            "WITH paged AS (
+                 SELECT a.id, a.actor_id, a.action, a.entity, a.entity_id,
+                        a.entity_name, a.detail, a.created_at
+                 FROM audit_logs a
+                 {where_sql}
+                 ORDER BY a.id DESC LIMIT ${lim_p}
+             )
+             SELECT paged.id, paged.actor_id, u.name AS actor_name, paged.action, paged.entity, paged.entity_id,
+                    {name},
+                    CASE WHEN paged.entity = 'ride' THEN (SELECT pickup_at FROM rides WHERE id = paged.entity_id) END,
+                    paged.detail, paged.created_at
+             FROM paged
+             LEFT JOIN users u ON u.id = paged.actor_id
+             ORDER BY paged.id DESC",
+            name = audit_name_sql(u.lang, "paged"),
+        )
+    };
     // One row more than the page shows whether another page follows.
-    let mut rows: Vec<(
-        i64,
-        Option<i64>,
-        Option<String>,
-        String,
-        String,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-        String,
-        String,
-    )> = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
-        .bind(&entity)
-        .bind(q.entity_id)
-        .bind(&like)
-        .bind(&from)
-        .bind(&until)
-        .bind(q.before)
-        .bind(&action)
-        .bind(q.actor_id)
-        .bind(limit + 1)
-        .fetch_all(&st.db)
-        .await?;
+    let mut query = sqlx::query_as::<
+        _,
+        (
+            i64,
+            Option<i64>,
+            Option<String>,
+            String,
+            String,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+        ),
+    >(sqlx::AssertSqlSafe(&*sql));
+    for p in &params {
+        query = match p {
+            BindVal::I64(v) => query.bind(*v),
+            BindVal::Str(v) => query.bind(*v),
+        };
+    }
+    let mut rows = query.bind(limit + 1).fetch_all(&st.db).await?;
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
     let next_before = rows.last().filter(|_| more).map(|r| r.0);

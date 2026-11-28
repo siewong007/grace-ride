@@ -169,10 +169,22 @@ fun QuickJumpSheet(
                 .padding(bottom = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
-            Text(
-                stringResource(R.string.quick_jump_title),
-                style = MaterialTheme.typography.titleMedium,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.quick_jump_title),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        contentDescription = stringResource(R.string.common_close),
+                    )
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -229,6 +241,7 @@ fun QuickJumpSheet(
             LazyColumn(
                 Modifier
                     .fillMaxWidth()
+                    .weight(1f, fill = false)
                     .heightIn(max = 400.dp),
             ) {
                 itemsIndexed(filtered, key = { idx, (entry, _) -> "${entry.route}-${entry.isAction}-$idx" }) { idx, (entry, label) ->

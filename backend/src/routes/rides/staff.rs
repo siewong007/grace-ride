@@ -706,10 +706,11 @@ pub(super) async fn admin_rides(
     }
     let today = crate::util::today_local().format("%Y-%m-%d").to_string();
     // No sort chosen: upcoming and today first (soonest first), then past rides newest first.
-    // `today` is YYYY-MM-DD from our own clock, so it is safe to interpolate.
+    // `today` is YYYY-MM-DD from our own clock, and pickup_at is ISO YYYY-MM-DDTHH:MM, so a direct
+    // prefix comparison matches `substr(r.pickup_at, 1, 10) < '{today}'` without per-row slicing.
     let default_order = format!(
-        "(substr(r.pickup_at, 1, 10) < '{today}'), \
-         CASE WHEN substr(r.pickup_at, 1, 10) < '{today}' THEN NULL ELSE r.pickup_at END ASC, \
+        "(r.pickup_at < '{today}'), \
+         CASE WHEN r.pickup_at < '{today}' THEN NULL ELSE r.pickup_at END ASC, \
          r.pickup_at DESC, r.id ASC"
     );
     let order = crate::util::order_by(
@@ -731,12 +732,80 @@ pub(super) async fn admin_rides(
         "r.id ASC",
     );
 
+    let need_p = search.is_some() || q.sort.as_deref() == Some("passenger");
+    let need_d = search.is_some() || q.sort.as_deref() == Some("driver");
+    let need_a = q.sort.as_deref() == Some("area");
+    let mut page_joins = String::new();
+    if need_p {
+        page_joins.push_str(" JOIN users p ON p.id = r.passenger_id");
+    }
+    if need_d {
+        page_joins.push_str(" LEFT JOIN users d ON d.id = r.driver_id");
+    }
+    if need_a {
+        page_joins.push_str(" JOIN areas a ON a.id = r.pickup_area_id");
+    }
+    let where_expr = conds.join(" AND ");
+
+    let page_cte = |limit_expr: &str, offset_expr: Option<&str>| -> String {
+        if q.sort.as_deref().is_none() || q.sort.as_deref() == Some("") {
+            // Split upcoming (ASC) and past (DESC) along the exact partition used by default_order
+            // so PostgreSQL can read top rows from index bounds instead of sorting all rides.
+            let off_sql = offset_expr
+                .map(|o| format!(" OFFSET {o}"))
+                .unwrap_or_default();
+            let cap_expr = offset_expr
+                .map(|o| format!("({limit_expr} + {o})"))
+                .unwrap_or_else(|| limit_expr.to_string());
+            format!(
+                "WITH page_ids AS MATERIALIZED (
+                     SELECT sub.id, ROW_NUMBER() OVER () AS _ord
+                     FROM (
+                         SELECT u.id FROM (
+                             (SELECT up.id, 0 AS _grp, ROW_NUMBER() OVER () AS _rn FROM (
+                                 SELECT r.id FROM rides r{page_joins}
+                                 WHERE {where_expr} AND r.pickup_at >= '{today}'
+                                 ORDER BY r.pickup_at ASC, r.id ASC
+                                 LIMIT {cap_expr}
+                             ) up)
+                             UNION ALL
+                             (SELECT pa.id, 1 AS _grp, ROW_NUMBER() OVER () AS _rn FROM (
+                                 SELECT r.id FROM rides r{page_joins}
+                                 WHERE {where_expr} AND r.pickup_at < '{today}'
+                                 ORDER BY r.pickup_at DESC, r.id ASC
+                                 LIMIT {cap_expr}
+                             ) pa)
+                         ) u
+                         ORDER BY u._grp ASC, u._rn ASC
+                         LIMIT {limit_expr}{off_sql}
+                     ) sub
+                 )"
+            )
+        } else {
+            let off_sql = offset_expr
+                .map(|o| format!(" OFFSET {o}"))
+                .unwrap_or_default();
+            format!(
+                "WITH page_ids AS MATERIALIZED (
+                     SELECT sub.id, ROW_NUMBER() OVER () AS _ord
+                     FROM (
+                         SELECT r.id FROM rides r{page_joins}
+                         WHERE {where_expr}
+                         ORDER BY {order}
+                         LIMIT {limit_expr}{off_sql}
+                     ) sub
+                 )"
+            )
+        }
+    };
+
     if q.page.is_some() || q.limit.is_some() {
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM rides r JOIN users p ON p.id = r.passenger_id \
-             LEFT JOIN users d ON d.id = r.driver_id WHERE {}",
-            conds.join(" AND ")
-        );
+        let count_joins = if search.is_some() {
+            " JOIN users p ON p.id = r.passenger_id LEFT JOIN users d ON d.id = r.driver_id"
+        } else {
+            ""
+        };
+        let count_sql = format!("SELECT COUNT(*) FROM rides r{count_joins} WHERE {where_expr}");
         let mut count_query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(&*count_sql));
         if let Some(d) = &q.date {
             count_query = count_query.bind(d);
@@ -753,10 +822,15 @@ pub(super) async fn admin_rides(
         let limit = q.limit.unwrap_or(50).clamp(1, 200);
         let offset = (page - 1).saturating_mul(limit);
 
+        let lim_ph = format!("${n}");
+        let off_ph = format!("${}", n + 1);
+        let cte = page_cte(&lim_ph, Some(&off_ph));
         let sql = format!(
-            "{RIDE_SELECT} WHERE {} ORDER BY {order} LIMIT ${n} OFFSET ${}",
-            conds.join(" AND "),
-            n + 1
+            "{cte}
+             {RIDE_SELECT}
+             JOIN page_ids pid ON pid.id = r.id
+             WHERE r.id IN (SELECT id FROM page_ids)
+             ORDER BY pid._ord"
         );
         let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql));
         if let Some(d) = &q.date {
@@ -785,9 +859,13 @@ pub(super) async fn admin_rides(
         })));
     }
 
+    let cte = page_cte("300", None);
     let sql = format!(
-        "{RIDE_SELECT} WHERE {} ORDER BY {order} LIMIT 300",
-        conds.join(" AND ")
+        "{cte}
+         {RIDE_SELECT}
+         JOIN page_ids pid ON pid.id = r.id
+         WHERE r.id IN (SELECT id FROM page_ids)
+         ORDER BY pid._ord"
     );
     let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql));
     if let Some(d) = &q.date {

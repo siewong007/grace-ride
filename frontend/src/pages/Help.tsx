@@ -20,6 +20,7 @@ import HelpHome from '../components/HelpHome';
 import HelpTopicSheet, { TOPICS, TopicKey } from '../components/HelpTopicSheet';
 import GuideArranger from '../components/GuideArranger';
 import GuideListRow from '../components/GuideListRow';
+import { useGuideRunner } from '../components/GuideRunner';
 import { PageChromeContext } from '../components/PageChrome';
 import HelpDetail from './HelpDetail';
 import type { GuideStep, GuideSummary, TicketSummary } from '../types/help';
@@ -145,11 +146,18 @@ export default function Help() {
   }, [params, t, isHelpDesk]);
 
   // Data fetching:
-  // 1. Guides with steps for instant search
+  // 1. Guides with steps for instant search (reuse GuideRunnerProvider's loaded guides for non-staff)
+  const guideRunner = useGuideRunner();
+  const reuseRunnerGuides = guideRunner.hasProvider && !isStaff;
   const guidesApi = useApi<(GuideSummary & { steps?: GuideStep[] })[]>(
-    `/help/guides?full=true${isStaff ? '&include_drafts=true' : ''}`,
+    reuseRunnerGuides ? null : `/help/guides?full=true${isStaff ? '&include_drafts=true' : ''}`,
   );
-  const guides = useMemo(() => guidesApi.data ?? [], [guidesApi.data]);
+  const guides = useMemo(
+    () => (reuseRunnerGuides ? guideRunner.guides : guidesApi.data) ?? [],
+    [reuseRunnerGuides, guideRunner.guides, guidesApi.data],
+  );
+  const guidesLoading = reuseRunnerGuides ? guideRunner.guidesLoading : guidesApi.loading;
+  const reloadGuides = reuseRunnerGuides ? guideRunner.reloadGuides : guidesApi.reload;
 
   // 2. Member's own requests
   const ownRequestsApi = useApi<TicketSummary[]>('/help', 10000);
@@ -718,10 +726,10 @@ export default function Help() {
                   guides={guides}
                   onDone={(saved) => {
                     setArranging(false);
-                    if (saved) guidesApi.reload();
+                    if (saved) reloadGuides();
                   }}
                 />
-              ) : guidesApi.loading ? (
+              ) : guidesLoading ? (
                 <CardSkeleton count={3} />
               ) : !displayedGuides.length ? (
                 <EmptyState title={t('guideNone')} />

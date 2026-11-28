@@ -25,6 +25,10 @@ interface GuideRunnerContextType {
   nextStep: () => void;
   prevStep: () => void;
   matchingGuideForPage: { guide: GuideSummary; stepIndex: number } | null;
+  hasProvider: boolean;
+  guides: (GuideSummary & { steps?: GuideStep[] })[] | null;
+  guidesLoading: boolean;
+  reloadGuides: () => Promise<void>;
 }
 
 const GuideRunnerCtx = createContext<GuideRunnerContextType>({
@@ -34,6 +38,10 @@ const GuideRunnerCtx = createContext<GuideRunnerContextType>({
   nextStep: () => {},
   prevStep: () => {},
   matchingGuideForPage: null,
+  hasProvider: false,
+  guides: null,
+  guidesLoading: false,
+  reloadGuides: async () => {},
 });
 
 export const useGuideRunner = () => useContext(GuideRunnerCtx);
@@ -270,6 +278,10 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
         nextStep,
         prevStep,
         matchingGuideForPage,
+        hasProvider: true,
+        guides: guidesApi.data,
+        guidesLoading: guidesApi.loading,
+        reloadGuides: guidesApi.reload,
       }}
     >
       {children}

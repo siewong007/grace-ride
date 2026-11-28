@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -33,6 +34,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
@@ -424,7 +426,9 @@ class TransitionsAndAnimationsAndroidTest {
         waitForText(res(R.string.profile_personal))
 
         compose.onNodeWithContentDescription(res(R.string.nav_home)).performClick()
-        waitForText("Church Sanctuary", substring = true)
+        waitForText("Hello, Animation Tester", substring = true)
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Church Sanctuary", substring = true))
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Hello, Animation Tester", substring = true))
 
         // Horizontal drag gesture navigation: Home -> Events -> Home
         compose.onRoot().performTouchInput {
@@ -435,7 +439,7 @@ class TransitionsAndAnimationsAndroidTest {
         compose.onRoot().performTouchInput {
             swipeRight(startX = right * 0.15f, endX = right * 0.9f, durationMillis = 300)
         }
-        waitForText("Church Sanctuary", substring = true)
+        waitForText("Hello, Animation Tester", substring = true)
 
         // Detail push hides floating bottom bar; pop restores it cleanly.
         compose.onNodeWithContentDescription(res(R.string.notif_title)).performClick()
@@ -443,7 +447,7 @@ class TransitionsAndAnimationsAndroidTest {
         compose.onNodeWithContentDescription(res(R.string.nav_events)).assertDoesNotExist()
 
         compose.onNodeWithContentDescription(res(R.string.a11y_back)).performClick()
-        waitForText("Church Sanctuary", substring = true)
+        waitForText("Hello, Animation Tester", substring = true)
         compose.onNodeWithContentDescription(res(R.string.nav_events)).assertIsDisplayed()
     }
 

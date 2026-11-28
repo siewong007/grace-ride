@@ -714,7 +714,7 @@
 
     <!-- UX Redesign, Settings Sub-Screens, Live Map & Waze -->
     <string name="profile_appearance_lang">外观与语言</string>
-    <string name="profile_section_setup">偏好与设置</string>
+    <string name="profile_section_setup">账号与资料</string>
     <string name="nav_chooser_title">选择导航应用</string>
     <string name="nav_app_title">默认导航应用</string>
     <string name="nav_app_ask">询问</string>
@@ -887,7 +887,7 @@
 
     <string name="traffic_rides_list_view">全部行程</string>
     <string name="traffic_rides_drafts_view">草稿提议</string>
-    <string name="traffic_rides_search_hint">搜索乘客、司机、区域…</string>
+    <string name="traffic_rides_search_hint">搜索行程…</string>
     <string name="traffic_rides_date_all">全部日期</string>
     <string name="traffic_rides_date_today">今天</string>
     <string name="traffic_rides_date_sunday">主日</string>
@@ -2114,4 +2114,29 @@
     <string name="settlement_custom_unbalanced_error">发布前自定义分摊总额必须与净总额一致。</string>
     <string name="help_guide_step_number">第 %1$d 步</string>
     <string name="common_image_load_failed">无法加载图片</string>
+    <string name="live_open_driver_maps">在地图中查看司机位置</string>
+    <plurals name="help_guide_steps_count_plural">
+        <item quantity="other">%d 个步骤</item>
+    </plurals>
+    <plurals name="costs_items_due_plural">
+        <item quantity="other">共 %d 笔待处理</item>
+    </plurals>
+    <plurals name="member_count_plural">
+        <item quantity="other">%d 位成员</item>
+    </plurals>
+    <plurals name="settlement_total_preview_plural">
+        <item quantity="other">净额 %1$s · 共 %2$d 人分摊</item>
+    </plurals>
+    <plurals name="members_total_page_plural">
+        <item quantity="other">%1$d 位成员 · 第 %2$d/%3$d 页</item>
+    </plurals>
+    <plurals name="home_admin_pending_members_plural">
+        <item quantity="other">%d 位待审核成员</item>
+    </plurals>
+    <plurals name="traffic_plan_rides_count_plural">
+        <item quantity="other">%d 趟行程</item>
+    </plurals>
+    <plurals name="traffic_live_trips_plural">
+        <item quantity="other">%d 位接送中</item>
+    </plurals>
 </resources>

@@ -16,7 +16,7 @@ import { SwipeTabsGesture, useMobileNav } from './SwipeTabs';
 import { getBottomNavTabs, matchBottomTab } from '../bottomNav';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
-import { useStaffNav, waitingBadge } from '../staffNav';
+import { StaffNavContext, useStaffNav, waitingBadge } from '../staffNav';
 import { flushOfflineQueue, getOfflineQueue, useOfflineQueueTick } from '../offlineQueue';
 
 interface NavItem {
@@ -116,7 +116,8 @@ function LayoutInner() {
     setJumpOpen(true);
   }, []);
   useQuickJumpShortcut(openJump);
-  const { staffGroups, staff, staffWaiting, helpDesk, isTrafficOnlyStaff, trafficBadge } = useStaffNav();
+  const staffNav = useStaffNav();
+  const { staffGroups, staff, staffWaiting, helpDesk, isTrafficOnlyStaff, trafficBadge } = staffNav;
   const isHome = loc.pathname === '/';
   const pending = me?.status === 'pending';
   // The profile page itself, where a pending member's waiting-room checklist says what the banners would.
@@ -537,15 +538,17 @@ function LayoutInner() {
           </div>
         )}
         <main className="main" id="main" data-nav-dir={navDir ?? undefined}>
-          <PageChromeContext.Provider value={chrome}>
-            <GuideRunnerProvider>
-              <GuideHeaderActionContext.Provider value={<PageHeaderGuideButton />}>
-                <ErrorBoundary key={loc.pathname}>
-                  <Outlet />
-                </ErrorBoundary>
-              </GuideHeaderActionContext.Provider>
-            </GuideRunnerProvider>
-          </PageChromeContext.Provider>
+          <StaffNavContext.Provider value={{ ...staffNav, fromContext: true }}>
+            <PageChromeContext.Provider value={chrome}>
+              <GuideRunnerProvider>
+                <GuideHeaderActionContext.Provider value={<PageHeaderGuideButton />}>
+                  <ErrorBoundary key={loc.pathname}>
+                    <Outlet />
+                  </ErrorBoundary>
+                </GuideHeaderActionContext.Provider>
+              </GuideRunnerProvider>
+            </PageChromeContext.Provider>
+          </StaffNavContext.Provider>
         </main>
       </div>
 

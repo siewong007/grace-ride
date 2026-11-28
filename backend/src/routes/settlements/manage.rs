@@ -120,26 +120,34 @@ pub(super) async fn list_mine_organised(
         )?;
     }
 
+    let scope_cond = if finance { "TRUE" } else { "s.created_by = $1" };
+
     if q.page.is_some() || q.limit.is_some() {
-        let (total,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM settlements s WHERE (s.created_by=$1 AND $2) OR $3",
-        )
-        .bind(u.id)
-        .bind(own)
-        .bind(finance)
-        .fetch_one(&st.db)
-        .await?;
+        let count_sql = format!("SELECT COUNT(*) FROM settlements s WHERE {scope_cond}");
+        let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*count_sql));
+        if !finance {
+            count_q = count_q.bind(u.id);
+        }
+        let total = count_q.fetch_one(&st.db).await?;
 
         let page = q.page.unwrap_or(1).max(1);
         let limit = q.limit.unwrap_or(25).clamp(1, 100);
         let offset = (page - 1).saturating_mul(limit);
+        let (lim_p, off_p) = if finance { (1, 2) } else { (2, 3) };
 
-        let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
-            "SELECT s.id, s.title, e.title, s.status,
+        let rows_sql = format!(
+            "WITH page_ids AS (
+                 SELECT s.id, s.title, s.event_id, s.status
+                 FROM settlements s
+                 WHERE {scope_cond}
+                 ORDER BY s.id DESC
+                 LIMIT ${lim_p} OFFSET ${off_p}
+             )
+             SELECT s.id, s.title, e.title, s.status,
                     COALESCE(sh.total_cents, 0)::BIGINT,
                     COALESCE(sh.confirmed_cnt, 0)::BIGINT,
                     COALESCE(sh.total_cnt, 0)::BIGINT
-             FROM settlements s
+             FROM page_ids s
              JOIN events e ON e.id = s.event_id
              LEFT JOIN LATERAL (
                  SELECT COALESCE(SUM(amount_cents), 0)::BIGINT AS total_cents,
@@ -147,15 +155,15 @@ pub(super) async fn list_mine_organised(
                         COUNT(*)::BIGINT AS total_cnt
                  FROM settlement_shares WHERE settlement_id = s.id
              ) sh ON TRUE
-             WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT $4 OFFSET $5",
-        )
-        .bind(u.id)
-        .bind(own)
-        .bind(finance)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&st.db)
-        .await?;
+             ORDER BY s.id DESC"
+        );
+        let mut rq = sqlx::query_as::<_, (i64, String, String, String, i64, i64, i64)>(
+            sqlx::AssertSqlSafe(&*rows_sql),
+        );
+        if !finance {
+            rq = rq.bind(u.id);
+        }
+        let rows = rq.bind(limit).bind(offset).fetch_all(&st.db).await?;
 
         let total_pages = if total == 0 {
             1
@@ -173,12 +181,19 @@ pub(super) async fn list_mine_organised(
         })));
     }
 
-    let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
-        "SELECT s.id, s.title, e.title, s.status,
+    let rows_sql = format!(
+        "WITH page_ids AS (
+             SELECT s.id, s.title, s.event_id, s.status
+             FROM settlements s
+             WHERE {scope_cond}
+             ORDER BY s.id DESC
+             LIMIT 200
+         )
+         SELECT s.id, s.title, e.title, s.status,
                 COALESCE(sh.total_cents, 0)::BIGINT,
                 COALESCE(sh.confirmed_cnt, 0)::BIGINT,
                 COALESCE(sh.total_cnt, 0)::BIGINT
-         FROM settlements s
+         FROM page_ids s
          JOIN events e ON e.id = s.event_id
          LEFT JOIN LATERAL (
              SELECT COALESCE(SUM(amount_cents), 0)::BIGINT AS total_cents,
@@ -186,13 +201,15 @@ pub(super) async fn list_mine_organised(
                     COUNT(*)::BIGINT AS total_cnt
              FROM settlement_shares WHERE settlement_id = s.id
          ) sh ON TRUE
-         WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT 200",
-    )
-    .bind(u.id)
-    .bind(own)
-    .bind(finance)
-    .fetch_all(&st.db)
-    .await?;
+         ORDER BY s.id DESC"
+    );
+    let mut rq = sqlx::query_as::<_, (i64, String, String, String, i64, i64, i64)>(
+        sqlx::AssertSqlSafe(&*rows_sql),
+    );
+    if !finance {
+        rq = rq.bind(u.id);
+    }
+    let rows = rq.fetch_all(&st.db).await?;
     Ok(Json(json!(rows.into_iter().map(|(id, t, et, s, total, conf, n)| json!({
         "id": id, "title": t, "event_title": et, "status": s, "total_cents": total, "confirmed": conf, "count": n,
     })).collect::<Vec<_>>())))

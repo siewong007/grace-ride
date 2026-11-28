@@ -29,7 +29,7 @@ import {
 } from '../components/ui';
 import type { Ride } from '../components/RideCard';
 import type { ProxyRider, SavedPlace } from '../types/domain';
-import { fmtDateTime, todayStr, useFormatT } from '../format';
+import { fmtDateTime, localDate, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
 import { AreaPhotoStrip } from '../components/AreaPhotos';
@@ -53,6 +53,42 @@ interface EventData {
 
 /** A ride is asked for from an event page. Opened without `?event=` (an old link or
  *  bookmark) there is nothing to attach it to, so point the member at the events list. */
+
+function parseLocalEventTime(value: string): Date | null {
+  const [datePart = '', timePart = '09:00'] = value.split(/[T ]/);
+  const [y, m, d] = datePart.split('-').map(Number);
+  const [hh, mm] = timePart.split(':').map(Number);
+  if ([y, m, d, hh, mm].some((n) => Number.isNaN(n))) return null;
+  return new Date(y, m - 1, d, hh, mm, 0, 0);
+}
+
+/** Pick the default outbound pickup time (`starts_at - 40m`), clamping future soon events forward
+ *  so a member opening the form within 40 minutes of start is never pre-filled with a past time. */
+function defaultOutboundDateTime(startsAt: string): { date: string; time: string; mins: number } {
+  const [d = '', t2 = '09:00'] = startsAt.split(/[T ]/);
+  const [h = 9, m = 0] = t2.split(':').map(Number);
+  const idealMins = Math.max(0, h * 60 + m - 40);
+  const startDt = parseLocalEventTime(startsAt);
+  const nowMs = Date.now();
+  if (startDt && startDt.getTime() > nowMs) {
+    const idealMs = startDt.getTime() - 40 * 60_000;
+    const minSoonMs = nowMs + 5 * 60_000;
+    if (idealMs < minSoonMs) {
+      const clamped = new Date(Math.min(startDt.getTime(), minSoonMs));
+      const cMins = clamped.getHours() * 60 + clamped.getMinutes();
+      return {
+        date: localDate(clamped),
+        time: `${String(clamped.getHours()).padStart(2, '0')}:${String(cMins % 60).padStart(2, '0')}`,
+        mins: cMins,
+      };
+    }
+  }
+  return {
+    date: d,
+    time: `${String(Math.floor(idealMins / 60)).padStart(2, '0')}:${String(idealMins % 60).padStart(2, '0')}`,
+    mins: idealMins,
+  };
+}
 export default function RideNew() {
   const { t } = useTranslation('rideNew');
   const [params] = useSearchParams();
@@ -179,15 +215,15 @@ function RideNewForm() {
       setDestination(preferredPlace?.address || lastOwnRide?.pickup_address || '');
       if (!area && preferredPlace?.area_id) setArea(String(preferredPlace.area_id));
     } else {
-      const mins = Math.max(0, h * 60 + m - 40);
-      const hhmm = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-      setTime(hhmm);
+      const def = defaultOutboundDateTime(event.starts_at);
+      setDate(def.date);
+      setTime(def.time);
       setDestination(event.location);
       if (address === event.location) {
         setAddress(preferredPlace?.address || lastOwnRide?.pickup_address || '');
       }
       if (newType === 'round') {
-        const retMins = Math.min(23 * 60 + 59, h * 60 + m + 120);
+        const retMins = Math.min(23 * 60 + 59, Math.max(def.mins + 30, h * 60 + m + 120));
         setReturnTime(`${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`);
       }
     }
@@ -196,14 +232,13 @@ function RideNewForm() {
   const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
     if (!event || prefilled) return;
-    const [d = '', t2 = '09:00'] = event.starts_at.split(/[T ]/);
+    const [, t2 = '09:00'] = event.starts_at.split(/[T ]/);
     const [h = 9, m = 0] = t2.split(':').map(Number);
-    const mins = Math.max(0, h * 60 + m - 40);
-    const hhmm = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-    setDate(d);
-    setTime(hhmm);
-    if (mins >= 12 * 60) {
-      const retMins = Math.min(23 * 60 + 59, mins + 120);
+    const def = defaultOutboundDateTime(event.starts_at);
+    setDate(def.date);
+    setTime(def.time);
+    if (def.mins >= 12 * 60) {
+      const retMins = Math.min(23 * 60 + 59, Math.max(def.mins + 30, h * 60 + m + 120));
       setReturnTime(`${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`);
     }
     setDestination(event.location);

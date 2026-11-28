@@ -106,6 +106,7 @@ import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -338,10 +339,14 @@ fun EventDetailScreen(
                         onRefresh = vm::refresh,
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        Column(
-                            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        AdaptiveContentFrame(
+                            modifier = Modifier.fillMaxSize(),
+                            maxWidth = 840.dp,
                         ) {
+                            Column(
+                                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            ) {
                             event.photoFileId?.let { fid ->
                                 AsyncImage(
                                     model = container.fileUrl(fid),
@@ -1043,6 +1048,7 @@ fun EventDetailScreen(
                                 }
                             }
                         }
+                        }
                     }
                 }
             }
@@ -1095,6 +1101,7 @@ fun EventDetailScreen(
                 Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = Spacing.md)
                     .padding(bottom = Spacing.md),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),

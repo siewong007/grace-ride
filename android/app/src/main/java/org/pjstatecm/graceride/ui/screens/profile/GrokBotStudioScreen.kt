@@ -75,6 +75,7 @@ import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.ProfileUpdateReq
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.copyToClipboard
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.GrokBotCanvas
 import org.pjstatecm.graceride.ui.components.GrokBotControlsPanel
 import org.pjstatecm.graceride.ui.components.GrokBotGeometry
@@ -254,11 +255,17 @@ fun GrokBotStudioScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-            contentPadding = PaddingValues(vertical = Spacing.sm),
+        AdaptiveContentFrame(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            maxWidth = 760.dp,
         ) {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                contentPadding = PaddingValues(vertical = Spacing.sm),
+            ) {
             item {
                 Text(
                     stringResource(R.string.studio_subtitle),
@@ -481,6 +488,7 @@ fun GrokBotStudioScreen(
                         body = stringResource(R.string.studio_step3_body),
                     )
                 }
+            }
             }
         }
     }

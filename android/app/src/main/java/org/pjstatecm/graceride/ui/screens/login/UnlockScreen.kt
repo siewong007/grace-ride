@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -243,6 +244,10 @@ fun UnlockScreen(container: AppContainer) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Column(
+            Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
             shape = CircleShape,
@@ -360,6 +365,7 @@ fun UnlockScreen(container: AppContainer) {
         }
         TextButton(onClick = { vm.signOut() }, modifier = Modifier.padding(top = Spacing.sm)) {
             Text(stringResource(R.string.profile_logout))
+        }
         }
     }
 }

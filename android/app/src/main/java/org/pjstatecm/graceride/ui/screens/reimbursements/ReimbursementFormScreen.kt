@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,6 +34,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +72,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.SectionHeader
@@ -128,31 +131,39 @@ fun ReimbursementFormScreen(
         },
         bottomBar = {
             if (!state.loading) {
-                Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
+                Surface(color = MaterialTheme.colorScheme.surface) {
                     Column(
                         Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .imePadding()
-                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            .imePadding(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        state.error?.let { err ->
-                            Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        }
-                        Button(
-                            onClick = {
-                                UiHaptics.confirm(view)
-                                vm.submit(invalidMsg)
-                            },
-                            enabled = !state.submitting && !state.uploadingReceipt,
-                            colors = graceRidePrimaryButtonColors(),
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(
+                            Modifier
+                                .widthIn(max = 720.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                         ) {
-                            if (state.submitting) {
-                                InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
-                            } else {
-                                Text(stringResource(R.string.reimb_submit))
+                            state.error?.let { err ->
+                                Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            }
+                            Button(
+                                onClick = {
+                                    UiHaptics.confirm(view)
+                                    vm.submit(invalidMsg)
+                                },
+                                enabled = !state.submitting && !state.uploadingReceipt,
+                                colors = graceRidePrimaryButtonColors(),
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                            ) {
+                                if (state.submitting) {
+                                    InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                                } else {
+                                    Text(stringResource(R.string.reimb_submit))
+                                }
                             }
                         }
                     }
@@ -170,8 +181,10 @@ fun ReimbursementFormScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            AdaptiveContentFrame(maxWidth = 720.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             OutlinedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Row(
@@ -373,6 +386,8 @@ fun ReimbursementFormScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+                }
+            }
         }
     }
 

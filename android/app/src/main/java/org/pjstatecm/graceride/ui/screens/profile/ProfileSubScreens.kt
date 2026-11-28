@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -97,6 +98,8 @@ import org.pjstatecm.graceride.notifications.NotificationHelper
 import org.pjstatecm.graceride.platform.BiometricAvailability
 import org.pjstatecm.graceride.platform.QrCodeCanvas
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTwoColumnRow
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.SectionHeader
 import org.pjstatecm.graceride.ui.copyToClipboard
@@ -197,11 +200,16 @@ fun PersonalDetailsScreen(container: AppContainer, nav: NavHostController) {
         nav = nav,
         snackbar = snackbar,
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-            contentPadding = PaddingValues(vertical = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        AdaptiveContentFrame(
+            maxWidth = 720.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                contentPadding = PaddingValues(vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
             item {
                 SettingsSurfaceCard {
                     OutlinedTextField(
@@ -239,6 +247,7 @@ fun PersonalDetailsScreen(container: AppContainer, nav: NavHostController) {
                     }
                 }
             }
+        }
         }
     }
 }
@@ -295,195 +304,207 @@ fun AppearanceSettingsScreen(container: AppContainer, nav: NavHostController) {
         nav = nav,
         snackbar = snackbar,
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-            contentPadding = PaddingValues(vertical = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        AdaptiveContentFrame(
+            maxWidth = 920.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
-            item {
-                SettingsSurfaceCard {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-                        Text(stringResource(R.string.profile_theme), style = MaterialTheme.typography.titleSmall)
-                        val activeTheme = ThemeMode.fromKey(themeModeKey)
-                        val themeOptions = listOf(
-                            ThemeMode.SYSTEM to stringResource(R.string.profile_theme_system),
-                            ThemeMode.LIGHT to stringResource(R.string.profile_theme_light),
-                            ThemeMode.DARK to stringResource(R.string.profile_theme_dark),
-                        )
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            themeOptions.forEachIndexed { idx, (modeOpt, label) ->
-                                SegmentedButton(
-                                    selected = activeTheme == modeOpt,
-                                    onClick = {
-                                        UiHaptics.tick(view)
-                                        container.setThemeMode(modeOpt.key)
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(index = idx, count = themeOptions.size),
-                                    label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                )
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-                        Text(stringResource(R.string.profile_text_size), style = MaterialTheme.typography.titleSmall)
-                        val textSizeOptions = listOf(
-                            "normal" to stringResource(R.string.profile_text_size_normal),
-                            "large" to stringResource(R.string.profile_text_size_large),
-                            "xl" to stringResource(R.string.profile_text_size_xl),
-                        )
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            textSizeOptions.forEachIndexed { idx, (modeKey, label) ->
-                                SegmentedButton(
-                                    selected = textScaleMode == modeKey,
-                                    onClick = {
-                                        UiHaptics.tick(view)
-                                        container.setTextScale(modeKey)
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(index = idx, count = textSizeOptions.size),
-                                    label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                )
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-                        Text(stringResource(R.string.profile_language), style = MaterialTheme.typography.titleSmall)
-                        val langs = listOf(
-                            "en" to stringResource(R.string.profile_lang_en),
-                            "zh" to stringResource(R.string.profile_lang_zh),
-                        )
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            langs.forEachIndexed { idx, (code, label) ->
-                                SegmentedButton(
-                                    selected = state.lang == code,
-                                    onClick = {
-                                        if (state.lang != code) {
-                                            UiHaptics.tick(view)
-                                            vm.setLang(code) { applyAppLocale(context, code) }
-                                        }
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(index = idx, count = langs.size),
-                                    label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (me != null && me.status != "pending") {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                contentPadding = PaddingValues(vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
                 item {
-                    SettingsSurfaceCard {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f).padding(end = Spacing.xs)) {
-                                Text(stringResource(R.string.profile_badges_opt_out), style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    stringResource(R.string.profile_badges_opt_out_hint),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    val primaryAppearanceCard: @Composable () -> Unit = {
+                        SettingsSurfaceCard {
+                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                                Text(stringResource(R.string.profile_theme), style = MaterialTheme.typography.titleSmall)
+                                val activeTheme = ThemeMode.fromKey(themeModeKey)
+                                val themeOptions = listOf(
+                                    ThemeMode.SYSTEM to stringResource(R.string.profile_theme_system),
+                                    ThemeMode.LIGHT to stringResource(R.string.profile_theme_light),
+                                    ThemeMode.DARK to stringResource(R.string.profile_theme_dark),
                                 )
-                            }
-                            Switch(
-                                checked = me.badgesOptOut,
-                                enabled = !state.busy,
-                                onCheckedChange = { wantOptOut ->
-                                    UiHaptics.tick(view)
-                                    vm.setBadgesOptOut(wantOptOut)
-                                },
-                            )
-                        }
-                    }
-                }
-
-                item {
-                    SettingsSurfaceCard {
-                        Text(stringResource(R.string.profile_calendar_feed_title), style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            stringResource(R.string.profile_calendar_feed_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        val feedUrl = state.calendarFeedUrl
-                        if (!feedUrl.isNullOrBlank()) {
-                            Text(
-                                feedUrl,
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        if (copyToClipboard(context, "Calendar Feed", feedUrl, sensitive = true)) {
-                                            scope.launch { snackbar.showSnackbar(calCopiedMsg) }
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(stringResource(R.string.profile_calendar_feed_copy))
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                    themeOptions.forEachIndexed { idx, (modeOpt, label) ->
+                                        SegmentedButton(
+                                            selected = activeTheme == modeOpt,
+                                            onClick = {
+                                                UiHaptics.tick(view)
+                                                container.setThemeMode(modeOpt.key)
+                                            },
+                                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = themeOptions.size),
+                                            label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        )
+                                    }
                                 }
-                                Button(
-                                    onClick = {
-                                        val webcalUrl = feedUrl
-                                            .replaceFirst("https://", "webcal://")
-                                            .replaceFirst("http://", "webcal://")
-                                        val opened = runCatching {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, webcalUrl.toUri()).apply {
-                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                                Text(stringResource(R.string.profile_text_size), style = MaterialTheme.typography.titleSmall)
+                                val textSizeOptions = listOf(
+                                    "normal" to stringResource(R.string.profile_text_size_normal),
+                                    "large" to stringResource(R.string.profile_text_size_large),
+                                    "xl" to stringResource(R.string.profile_text_size_xl),
+                                )
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                    textSizeOptions.forEachIndexed { idx, (modeKey, label) ->
+                                        SegmentedButton(
+                                            selected = textScaleMode == modeKey,
+                                            onClick = {
+                                                UiHaptics.tick(view)
+                                                container.setTextScale(modeKey)
+                                            },
+                                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = textSizeOptions.size),
+                                            label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                                Text(stringResource(R.string.profile_language), style = MaterialTheme.typography.titleSmall)
+                                val langs = listOf(
+                                    "en" to stringResource(R.string.profile_lang_en),
+                                    "zh" to stringResource(R.string.profile_lang_zh),
+                                )
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                    langs.forEachIndexed { idx, (code, label) ->
+                                        SegmentedButton(
+                                            selected = state.lang == code,
+                                            onClick = {
+                                                if (state.lang != code) {
+                                                    UiHaptics.tick(view)
+                                                    vm.setLang(code) { applyAppLocale(context, code) }
+                                                }
+                                            },
+                                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = langs.size),
+                                            label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (me != null && me.status != "pending") {
+                        AdaptiveTwoColumnRow(
+                            twoColumnBreakpoint = 680.dp,
+                            first = { primaryAppearanceCard() },
+                            second = {
+                                SettingsSurfaceCard {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(Modifier.weight(1f).padding(end = Spacing.xs)) {
+                                            Text(stringResource(R.string.profile_badges_opt_out), style = MaterialTheme.typography.titleSmall)
+                                            Text(
+                                                stringResource(R.string.profile_badges_opt_out_hint),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        Switch(
+                                            checked = me.badgesOptOut,
+                                            enabled = !state.busy,
+                                            onCheckedChange = { wantOptOut ->
+                                                UiHaptics.tick(view)
+                                                vm.setBadgesOptOut(wantOptOut)
+                                            },
+                                        )
+                                    }
+                                }
+
+                                SettingsSurfaceCard {
+                                    Text(stringResource(R.string.profile_calendar_feed_title), style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        stringResource(R.string.profile_calendar_feed_desc),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    val feedUrl = state.calendarFeedUrl
+                                    if (!feedUrl.isNullOrBlank()) {
+                                        Text(
+                                            feedUrl,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    if (copyToClipboard(context, "Calendar Feed", feedUrl, sensitive = true)) {
+                                                        scope.launch { snackbar.showSnackbar(calCopiedMsg) }
+                                                    }
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                            ) {
+                                                Text(stringResource(R.string.profile_calendar_feed_copy))
+                                            }
+                                            Button(
+                                                onClick = {
+                                                    val webcalUrl = feedUrl
+                                                        .replaceFirst("https://", "webcal://")
+                                                        .replaceFirst("http://", "webcal://")
+                                                    val opened = runCatching {
+                                                        context.startActivity(
+                                                            Intent(Intent.ACTION_VIEW, webcalUrl.toUri()).apply {
+                                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                            },
+                                                        )
+                                                        true
+                                                    }.getOrDefault(false)
+                                                    if (!opened) openInWebApp(context, feedUrl)
+                                                },
+                                                colors = graceRidePrimaryButtonColors(),
+                                                modifier = Modifier.weight(1f),
+                                            ) {
+                                                Text(stringResource(R.string.profile_calendar_feed_subscribe))
+                                            }
+                                        }
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = vm::rotateCalendarFeed,
+                                            enabled = !state.busy,
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text(
+                                                if (state.calendarFeedEnabled == true) {
+                                                    stringResource(R.string.profile_calendar_feed_rotate)
+                                                } else {
+                                                    stringResource(R.string.profile_calendar_feed_enable)
                                                 },
                                             )
-                                            true
-                                        }.getOrDefault(false)
-                                        if (!opened) openInWebApp(context, feedUrl)
-                                    },
-                                    colors = graceRidePrimaryButtonColors(),
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(stringResource(R.string.profile_calendar_feed_subscribe))
+                                        }
+                                        if (state.calendarFeedEnabled == true) {
+                                            TextButton(
+                                                onClick = vm::revokeCalendarFeed,
+                                                enabled = !state.busy,
+                                                colors = ButtonDefaults.textButtonColors(
+                                                    contentColor = MaterialTheme.colorScheme.error,
+                                                ),
+                                            ) {
+                                                Text(stringResource(R.string.profile_calendar_feed_revoke))
+                                            }
+                                        }
+                                    }
                                 }
-                            }
-                        }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        ) {
-                            OutlinedButton(
-                                onClick = vm::rotateCalendarFeed,
-                                enabled = !state.busy,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(
-                                    if (state.calendarFeedEnabled == true) {
-                                        stringResource(R.string.profile_calendar_feed_rotate)
-                                    } else {
-                                        stringResource(R.string.profile_calendar_feed_enable)
-                                    },
-                                )
-                            }
-                            if (state.calendarFeedEnabled == true) {
-                                TextButton(
-                                    onClick = vm::revokeCalendarFeed,
-                                    enabled = !state.busy,
-                                    colors = ButtonDefaults.textButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.error,
-                                    ),
-                                ) {
-                                    Text(stringResource(R.string.profile_calendar_feed_revoke))
-                                }
-                            }
-                        }
+                            },
+                        )
+                    } else {
+                        primaryAppearanceCard()
                     }
                 }
             }
@@ -628,11 +649,16 @@ fun NotificationSettingsScreen(container: AppContainer, nav: NavHostController) 
         nav = nav,
         snackbar = snackbar,
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-            contentPadding = PaddingValues(vertical = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        AdaptiveContentFrame(
+            maxWidth = 720.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                contentPadding = PaddingValues(vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
             // 1. Device OS notification permission & channel management
             item {
                 val canRequestPrompt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -1108,6 +1134,7 @@ fun NotificationSettingsScreen(container: AppContainer, nav: NavHostController) 
                 }
             }
         }
+        }
     }
 }
 
@@ -1197,318 +1224,320 @@ fun SecuritySettingsScreen(container: AppContainer, nav: NavHostController) {
         nav = nav,
         snackbar = snackbar,
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-            contentPadding = PaddingValues(vertical = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        AdaptiveContentFrame(
+            maxWidth = 920.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
-            item {
-                SettingsSurfaceCard {
-                    val bioSubtitle = when {
-                        bioEnabledHere -> stringResource(R.string.profile_biometric_enabled_desc)
-                        biometricAvailability == BiometricAvailability.AVAILABLE -> stringResource(R.string.profile_biometric_available_desc)
-                        biometricAvailability == BiometricAvailability.NONE_ENROLLED -> stringResource(R.string.profile_biometric_none_enrolled)
-                        else -> stringResource(R.string.profile_biometric_unavailable)
-                    }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f).padding(end = Spacing.sm)) {
-                            Text(stringResource(R.string.profile_biometric_title), style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                bioSubtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = bioEnabledHere,
-                            enabled = !state.busy && (bioEnabledHere || biometricAvailability == BiometricAvailability.AVAILABLE),
-                            onCheckedChange = { wantEnable ->
-                                UiHaptics.tick(view)
-                                if (wantEnable) vm.enableBiometric(context) else vm.disableCurrentBiometric(context)
-                            },
-                        )
-                    }
-                    if (state.biometrics.isNotEmpty()) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Text(
-                            stringResource(R.string.profile_biometric_devices),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        state.biometrics.forEach { bio ->
-                            val baseLabel = bio.label.ifBlank { stringResource(R.string.profile_biometric_default, bio.id) }
-                            val label = if (bio.credential_id == biometricEnrollment?.credentialId) {
-                                stringResource(R.string.profile_biometric_this_device, baseLabel)
-                            } else {
-                                baseLabel
-                            }
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.Fingerprint, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = Spacing.xs))
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                contentPadding = PaddingValues(vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                item {
+                    AdaptiveTwoColumnRow(
+                        twoColumnBreakpoint = 680.dp,
+                        first = {
+                            SettingsSurfaceCard {
+                                val bioSubtitle = when {
+                                    bioEnabledHere -> stringResource(R.string.profile_biometric_enabled_desc)
+                                    biometricAvailability == BiometricAvailability.AVAILABLE -> stringResource(R.string.profile_biometric_available_desc)
+                                    biometricAvailability == BiometricAvailability.NONE_ENROLLED -> stringResource(R.string.profile_biometric_none_enrolled)
+                                    else -> stringResource(R.string.profile_biometric_unavailable)
                                 }
-                                IconButton(onClick = { pendingDeleteBiometric = bio }) {
-                                    Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete), tint = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item { SectionHeader(stringResource(R.string.profile_passkeys)) }
-            item {
-                SettingsSurfaceCard {
-                    state.passkeys.forEach { key ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Outlined.Key, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(
-                                    key.label.ifBlank { stringResource(R.string.profile_passkey_default, key.id) },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.padding(start = Spacing.xs),
-                                )
-                            }
-                            IconButton(onClick = { pendingDeletePasskey = key }) {
-                                Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete), tint = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { vm.addPasskey(context) },
-                        enabled = !state.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(stringResource(R.string.profile_add_passkey)) }
-                }
-            }
-
-            item { SectionHeader(stringResource(R.string.profile_totp_title)) }
-            item {
-                SettingsSurfaceCard {
-                    val totpSetup = state.totpSetup
-                    if (me?.totpEnabled == true) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            ) {
-                                Icon(Icons.Outlined.QrCode2, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Text(stringResource(R.string.profile_totp_enabled), style = MaterialTheme.typography.titleSmall)
-                            }
-                        }
-                        if (me.privileged && !me.mfaOk) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            Text(
-                                stringResource(R.string.profile_verify_2fa),
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                            Text(
-                                stringResource(R.string.profile_verify_2fa_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            OutlinedTextField(
-                                value = staffVerifyCodeInput,
-                                onValueChange = { staffVerifyCodeInput = it },
-                                label = { Text(stringResource(R.string.profile_verify_2fa_code)) },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Button(
-                                onClick = { vm.verifyTotpForStaff(staffVerifyCodeInput) },
-                                enabled = staffVerifyCodeInput.isNotBlank() && !state.busy,
-                                colors = graceRidePrimaryButtonColors(),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(stringResource(R.string.profile_verify_2fa))
-                            }
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        OutlinedButton(
-                            onClick = { confirmRegenBackupCodes = true },
-                            enabled = !state.busy,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(Spacing.xs))
-                            Text(stringResource(R.string.profile_regen_backup_codes))
-                        }
-                    } else if (totpSetup == null) {
-                        Text(
-                            stringResource(R.string.profile_totp_disabled),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            stringResource(R.string.profile_totp_note),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        OutlinedButton(
-                            onClick = { vm.startTotpSetup(context) },
-                            enabled = !state.busy,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Outlined.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(Spacing.xs))
-                            Text(stringResource(R.string.profile_totp_setup_btn))
-                        }
-                    } else {
-                        Text(
-                            stringResource(R.string.profile_totp_setup_step1),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        if (totpSetup.url.isNotBlank()) {
-                            QrCodeCanvas(
-                                content = totpSetup.url,
-                                modifier = Modifier
-                                    .size(200.dp)
-                                    .align(Alignment.CenterHorizontally),
-                            )
-                        }
-                        if (totpSetup.secret.isNotBlank()) {
-                            Text(
-                                totpSetup.secret,
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    if (copyToClipboard(context, "TOTP secret", totpSetup.secret, sensitive = true)) {
-                                        scope.launch { snackbar.showSnackbar(secretCopiedMsg) }
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f).padding(end = Spacing.sm)) {
+                                        Text(stringResource(R.string.profile_biometric_title), style = MaterialTheme.typography.titleSmall)
+                                        Text(
+                                            bioSubtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(Spacing.xxs))
-                                Text(stringResource(R.string.profile_totp_copy_secret))
+                                    Switch(
+                                        checked = bioEnabledHere,
+                                        enabled = !state.busy && (bioEnabledHere || biometricAvailability == BiometricAvailability.AVAILABLE),
+                                        onCheckedChange = { wantEnable ->
+                                            UiHaptics.tick(view)
+                                            if (wantEnable) vm.enableBiometric(context) else vm.disableCurrentBiometric(context)
+                                        },
+                                    )
+                                }
+                                if (state.biometrics.isNotEmpty()) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    Text(
+                                        stringResource(R.string.profile_biometric_devices),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    state.biometrics.forEach { bio ->
+                                        val baseLabel = bio.label.ifBlank { stringResource(R.string.profile_biometric_default, bio.id) }
+                                        val label = if (bio.credential_id == biometricEnrollment?.credentialId) {
+                                            stringResource(R.string.profile_biometric_this_device, baseLabel)
+                                        } else {
+                                            baseLabel
+                                        }
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Outlined.Fingerprint, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = Spacing.xs))
+                                            }
+                                            IconButton(onClick = { pendingDeleteBiometric = bio }) {
+                                                Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete), tint = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            if (totpSetup.url.isNotBlank()) {
-                                OutlinedButton(
-                                    onClick = {
-                                        runCatching {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, totpSetup.url.toUri()).apply {
-                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                },
+
+                            SectionHeader(stringResource(R.string.profile_passkeys))
+                            SettingsSurfaceCard {
+                                state.passkeys.forEach { key ->
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Outlined.Key, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                key.label.ifBlank { stringResource(R.string.profile_passkey_default, key.id) },
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                modifier = Modifier.padding(start = Spacing.xs),
                                             )
                                         }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(stringResource(R.string.profile_totp_open_app))
+                                        IconButton(onClick = { pendingDeletePasskey = key }) {
+                                            Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete), tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { vm.addPasskey(context) },
+                                    enabled = !state.busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text(stringResource(R.string.profile_add_passkey)) }
+                            }
+                        },
+                        second = {
+                            SectionHeader(stringResource(R.string.profile_totp_title))
+                            SettingsSurfaceCard {
+                                val totpSetup = state.totpSetup
+                                if (me?.totpEnabled == true) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            Icon(Icons.Outlined.QrCode2, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            Text(stringResource(R.string.profile_totp_enabled), style = MaterialTheme.typography.titleSmall)
+                                        }
+                                    }
+                                    if (me.privileged && !me.mfaOk) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                        Text(
+                                            stringResource(R.string.profile_verify_2fa),
+                                            style = MaterialTheme.typography.titleSmall,
+                                        )
+                                        Text(
+                                            stringResource(R.string.profile_verify_2fa_desc),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        OutlinedTextField(
+                                            value = staffVerifyCodeInput,
+                                            onValueChange = { staffVerifyCodeInput = it },
+                                            label = { Text(stringResource(R.string.profile_verify_2fa_code)) },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        Button(
+                                            onClick = { vm.verifyTotpForStaff(staffVerifyCodeInput) },
+                                            enabled = staffVerifyCodeInput.isNotBlank() && !state.busy,
+                                            colors = graceRidePrimaryButtonColors(),
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(stringResource(R.string.profile_verify_2fa))
+                                        }
+                                    }
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    OutlinedButton(
+                                        onClick = { confirmRegenBackupCodes = true },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(Spacing.xs))
+                                        Text(stringResource(R.string.profile_regen_backup_codes))
+                                    }
+                                } else if (totpSetup == null) {
+                                    Text(
+                                        stringResource(R.string.profile_totp_disabled),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        stringResource(R.string.profile_totp_note),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    OutlinedButton(
+                                        onClick = { vm.startTotpSetup(context) },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(Icons.Outlined.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(Spacing.xs))
+                                        Text(stringResource(R.string.profile_totp_setup_btn))
+                                    }
+                                } else {
+                                    Text(
+                                        stringResource(R.string.profile_totp_setup_step1),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (totpSetup.url.isNotBlank()) {
+                                        QrCodeCanvas(
+                                            content = totpSetup.url,
+                                            modifier = Modifier
+                                                .size(200.dp)
+                                                .align(Alignment.CenterHorizontally),
+                                        )
+                                    }
+                                    if (totpSetup.secret.isNotBlank()) {
+                                        Text(
+                                            totpSetup.secret,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                if (copyToClipboard(context, "TOTP secret", totpSetup.secret, sensitive = true)) {
+                                                    scope.launch { snackbar.showSnackbar(secretCopiedMsg) }
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(Spacing.xxs))
+                                            Text(stringResource(R.string.profile_totp_copy_secret))
+                                        }
+                                        if (totpSetup.url.isNotBlank()) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    runCatching {
+                                                        context.startActivity(
+                                                            Intent(Intent.ACTION_VIEW, totpSetup.url.toUri()).apply {
+                                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                            },
+                                                        )
+                                                    }
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                            ) {
+                                                Text(stringResource(R.string.profile_totp_open_app))
+                                            }
+                                        }
+                                    }
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    Text(
+                                        stringResource(R.string.profile_totp_setup_step2),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    OutlinedTextField(
+                                        value = totpCodeInput,
+                                        onValueChange = { totpCodeInput = it.filter { ch -> ch.isDigit() }.take(8) },
+                                        label = { Text(stringResource(R.string.profile_totp_code_label)) },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Button(
+                                            onClick = { vm.enableTotp(totpCodeInput) },
+                                            enabled = totpCodeInput.length >= 6 && !state.busy,
+                                            colors = graceRidePrimaryButtonColors(),
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text(stringResource(R.string.profile_totp_enable_btn))
+                                        }
+                                        TextButton(
+                                            onClick = vm::cancelTotpSetup,
+                                            enabled = !state.busy,
+                                        ) {
+                                            Text(stringResource(R.string.common_cancel))
+                                        }
+                                    }
                                 }
                             }
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Text(
-                            stringResource(R.string.profile_totp_setup_step2),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        OutlinedTextField(
-                            value = totpCodeInput,
-                            onValueChange = { totpCodeInput = it.filter { ch -> ch.isDigit() }.take(8) },
-                            label = { Text(stringResource(R.string.profile_totp_code_label)) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        ) {
-                            Button(
-                                onClick = { vm.enableTotp(totpCodeInput) },
-                                enabled = totpCodeInput.length >= 6 && !state.busy,
-                                colors = graceRidePrimaryButtonColors(),
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(stringResource(R.string.profile_totp_enable_btn))
+
+                            SettingsSurfaceCard {
+                                var lockExpanded by remember { mutableStateOf(false) }
+                                val lockOptions = listOf(0, 5, 15, 30, 60, -1)
+                                val autoLockLabel: @Composable (Int) -> String = { mins ->
+                                    when {
+                                        mins == 0 -> stringResource(R.string.profile_auto_lock_default)
+                                        mins < 0 -> stringResource(R.string.profile_auto_lock_off)
+                                        else -> stringResource(R.string.profile_auto_lock_mins, mins)
+                                    }
+                                }
+                                ExposedDropdownMenuBox(expanded = lockExpanded, onExpandedChange = { lockExpanded = it }) {
+                                    OutlinedTextField(
+                                        value = autoLockLabel(me?.autoLockMins ?: 0),
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text(stringResource(R.string.profile_auto_lock)) },
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = lockExpanded) },
+                                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                                    )
+                                    ExposedDropdownMenu(expanded = lockExpanded, onDismissRequest = { lockExpanded = false }) {
+                                        lockOptions.forEach { mins ->
+                                            DropdownMenuItem(
+                                                text = { Text(autoLockLabel(mins)) },
+                                                onClick = { vm.setAutoLock(mins); lockExpanded = false },
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                            TextButton(
-                                onClick = vm::cancelTotpSetup,
+
+                            OutlinedButton(
+                                onClick = { vm.lockSessionNow(context) },
                                 enabled = !state.busy,
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text(stringResource(R.string.common_cancel))
+                                Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(Spacing.xs))
+                                Text(stringResource(R.string.profile_lock_now))
                             }
-                        }
-                    }
-                }
-            }
 
-            item {
-                SettingsSurfaceCard {
-                    var lockExpanded by remember { mutableStateOf(false) }
-                    val lockOptions = listOf(0, 5, 15, 30, 60, -1)
-                    val autoLockLabel: @Composable (Int) -> String = { mins ->
-                        when {
-                            mins == 0 -> stringResource(R.string.profile_auto_lock_default)
-                            mins < 0 -> stringResource(R.string.profile_auto_lock_off)
-                            else -> stringResource(R.string.profile_auto_lock_mins, mins)
-                        }
-                    }
-                    ExposedDropdownMenuBox(expanded = lockExpanded, onExpandedChange = { lockExpanded = it }) {
-                        OutlinedTextField(
-                            value = autoLockLabel(me?.autoLockMins ?: 0),
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(stringResource(R.string.profile_auto_lock)) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = lockExpanded) },
-                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-                        )
-                        ExposedDropdownMenu(expanded = lockExpanded, onDismissRequest = { lockExpanded = false }) {
-                            lockOptions.forEach { mins ->
-                                DropdownMenuItem(
-                                    text = { Text(autoLockLabel(mins)) },
-                                    onClick = { vm.setAutoLock(mins); lockExpanded = false },
-                                )
+                            TextButton(
+                                onClick = { confirmLogoutAll = true },
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.profile_logout_all))
                             }
-                        }
-                    }
-                }
-            }
-
-            item {
-                OutlinedButton(
-                    onClick = { vm.lockSessionNow(context) },
-                    enabled = !state.busy,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(Spacing.xs))
-                    Text(stringResource(R.string.profile_lock_now))
-                }
-            }
-
-            item {
-                TextButton(
-                    onClick = { confirmLogoutAll = true },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(stringResource(R.string.profile_logout_all))
+                        },
+                    )
                 }
             }
         }

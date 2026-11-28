@@ -241,6 +241,7 @@ class FullAppPagesAndScenariosAndroidTest {
         compose.onNodeWithText(res(R.string.shortcut_drive_short)).assertIsDisplayed()
         compose.onNodeWithText(res(R.string.history_title)).assertIsDisplayed()
         compose.onNodeWithText(res(R.string.home_quick_addresses)).assertDoesNotExist()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Church Sanctuary", substring = true))
         compose.onAllNodesWithText("Church Sanctuary", substring = true).onFirst().assertIsDisplayed()
 
         // 2. Navigate to Events tab via FloatingGlassBottomBar
@@ -311,7 +312,12 @@ class FullAppPagesAndScenariosAndroidTest {
         waitForText(res(R.string.profile_logout_all_confirm))
         compose.onNodeWithText(res(R.string.common_cancel)).performClick()
         compose.onNodeWithContentDescription(res(R.string.a11y_back)).performClick()
-        waitForText(res(R.string.profile_logout))
+        compose.waitUntil(8_000) {
+            compose.onAllNodesWithText(res(R.string.profile_personal)).fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithText(res(R.string.profile_security)).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText(res(R.string.profile_logout)))
+        compose.onNodeWithText(res(R.string.profile_logout)).assertIsDisplayed()
     }
 
     @Test

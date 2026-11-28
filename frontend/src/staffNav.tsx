@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { createContext, ReactNode, useContext } from 'react';
 import {
   FileBarChart,
   HeartHandshake,
@@ -45,11 +45,29 @@ export interface AdminCounts {
   open_invites: number;
   /** Approved claims waiting for finance to pay them. */
   awaiting_payment: number;
+  live_drivers?: number;
   pending_plan_drafts?: number;
   pending_ride_drafts?: number;
   my_returned_plan_drafts?: number;
   my_returned_ride_drafts?: number;
 }
+
+export interface StaffNavValue {
+  staffGroups: StaffGroup[];
+  staff: StaffNavItem[];
+  staffWaiting: number;
+  helpDesk: boolean;
+  counts: (AdminCounts & Record<string, unknown>) | null;
+  dashError: string | null;
+  reloadDash: () => Promise<void>;
+  isTrafficOnlyStaff: boolean;
+  canTrafficHub: boolean;
+  trafficBadge: number;
+  fromContext: boolean;
+}
+
+/** Shared nav state from Layout so child admin/home pages do not re-fetch /admin/dashboard on mount. */
+export const StaffNavContext = createContext<StaffNavValue | null>(null);
 
 export function waitingBadge(count: number | undefined, label: string) {
   return count ? (
@@ -88,16 +106,24 @@ const NON_TRAFFIC_STAFF_PERMS: PageKey[] = [
 /**
  * Staff pages grouped by the job they serve, filtered to what this member may open.
  * Used by the desktop sidebar and the phone admin menu page.
+ * When called inside Layout's StaffNavContext, reuses Layout's single /admin/dashboard fetch.
  */
-export function useStaffNav() {
+export function useStaffNav(): StaffNavValue {
+  const parent = useContext(StaffNavContext);
+  const own = useStaffNavImpl(!parent);
+  return parent ?? own;
+}
+
+function useStaffNavImpl(enabled: boolean): StaffNavValue {
   const { t } = useTranslation('layout');
   const { me, can } = useAuth();
   const pending = me?.status === 'pending';
   const helpDesk = can('admin_help');
-  const counts = useApi<AdminCounts>(
-    me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
+  const dashApi = useApi<AdminCounts & Record<string, unknown>>(
+    enabled && me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
     60000,
-  ).data;
+  );
+  const counts = dashApi.data;
 
   const canTrafficHub = TRAFFIC_HUB_PERMS.some((p) => can(p));
   const hasNonTrafficStaff = NON_TRAFFIC_STAFF_PERMS.some((p) => can(p));
@@ -190,9 +216,12 @@ export function useStaffNav() {
     staffWaiting,
     helpDesk,
     counts,
+    dashError: dashApi.error,
+    reloadDash: dashApi.reload,
     isTrafficOnlyStaff,
     canTrafficHub,
     trafficBadge,
+    fromContext: false,
   };
 }
 

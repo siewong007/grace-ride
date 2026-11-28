@@ -33,9 +33,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowDownward
@@ -426,7 +428,7 @@ private fun AreaPhotosPane(
             onDismissRequest = { pendingUpload = null },
             title = { Text(stringResource(R.string.traffic_area_photo_add)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(uri)
@@ -813,7 +815,7 @@ private fun AreaFaresPane(
             onDismissRequest = { showEditDialog = false },
             title = { Text(stringResource(if (isEditingFare) R.string.traffic_fare_edit else R.string.traffic_fare_add)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     AreaDropdownField(
                         label = stringResource(R.string.traffic_fare_area_a),
                         areas = areas,
@@ -1032,6 +1034,7 @@ private fun AreaFaresPane(
                     LazyColumn(
                         Modifier
                             .fillMaxWidth()
+                            .weight(1f, fill = false)
                             .heightIn(max = 320.dp),
                         verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
                     ) {
@@ -1248,7 +1251,10 @@ private fun AreasManagePane(
                 Text(stringResource(if (current == null) R.string.traffic_area_add else R.string.traffic_area_edit))
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
                     OutlinedTextField(
                         value = areaName,
                         onValueChange = { areaName = it },

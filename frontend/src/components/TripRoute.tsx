@@ -112,14 +112,19 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
     }
   }, [data]);
 
-  // Refresh when the schedule changes (pickup recorded, trip started, …).
-  const first = useRef(true);
+  // Refresh when the schedule changes (pickup recorded, trip started, …), without firing
+  // a duplicate initial request when `scheduleRides` first resolves from `undefined`.
+  const prevKeyRef = useRef<string | undefined>(refreshKey);
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
+    if (refreshKey === undefined) return;
+    if (prevKeyRef.current === undefined) {
+      prevKeyRef.current = refreshKey;
       return;
     }
-    void reload();
+    if (refreshKey !== prevKeyRef.current) {
+      prevKeyRef.current = refreshKey;
+      void reload();
+    }
   }, [refreshKey, reload]);
 
   const route = data?.route ?? cachedRoute;

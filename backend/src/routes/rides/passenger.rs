@@ -513,9 +513,11 @@ async fn is_active_caregiver_for_ride(st: &AppState, r: &RideRow, user_id: i64) 
          WHERE cg.id = $1 AND cg.status = 'active'
            AND (
                EXISTS (SELECT 1 FROM users p WHERE p.id = $2 AND p.caregiver_user_id = $1)
-               OR ($3 = 1 AND $4 <> '' AND EXISTS (
+               OR ($3 = 1 AND BTRIM($4) <> '' AND EXISTS (
                    SELECT 1 FROM proxy_riders pr
-                   WHERE pr.user_id = $2 AND pr.name = $4 AND pr.caregiver_user_id = $1
+                   WHERE pr.user_id = $2
+                     AND LOWER(BTRIM(pr.name)) = LOWER(BTRIM($4))
+                     AND pr.caregiver_user_id = $1
                ))
            )",
     )

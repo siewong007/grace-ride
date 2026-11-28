@@ -670,32 +670,25 @@ pub(super) async fn monthly_report(
     ) = if !can_events {
         (Vec::new(), Vec::new(), None)
     } else {
-        let attended: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
-                 WHERE s.user_id=$1 AND s.attended=1 AND s.status <> 'cancelled'
-                   AND e.status NOT IN ('draft', 'cancelled')
-                   AND e.starts_at >= $2 AND e.starts_at < $3
-                 GROUP BY e.kind",
+        let events: Vec<(i64, String, String, String)> = sqlx::query_as(
+            "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
+             WHERE s.user_id=$1 AND s.attended=1 AND s.status <> 'cancelled'
+               AND e.status NOT IN ('draft', 'cancelled')
+               AND e.starts_at >= $2 AND e.starts_at < $3
+             ORDER BY e.starts_at",
         )
         .bind(target)
         .bind(&start)
         .bind(&end)
         .fetch_all(&st.db)
         .await?;
-        let events: Vec<(i64, String, String, String)> = sqlx::query_as(
-                "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
-                 WHERE s.user_id=$1 AND s.attended=1 AND s.status <> 'cancelled'
-                   AND e.status NOT IN ('draft', 'cancelled')
-                   AND e.starts_at >= $2 AND e.starts_at < $3
-                 ORDER BY e.starts_at",
-            )
-            .bind(target)
-            .bind(&start)
-            .bind(&end)
-            .fetch_all(&st.db)
-            .await?;
-        let sum: i64 = attended.iter().map(|a| a.1).sum();
-        (attended, events, Some(sum))
+        let mut by_kind: std::collections::BTreeMap<String, i64> =
+            std::collections::BTreeMap::new();
+        for (_, _, kind, _) in &events {
+            *by_kind.entry(kind.clone()).or_insert(0) += 1;
+        }
+        let sum = events.len() as i64;
+        (by_kind.into_iter().collect(), events, Some(sum))
     };
 
     let paid: Option<i64> = if !can_costs_paid {

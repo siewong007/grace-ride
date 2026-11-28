@@ -55,6 +55,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -185,13 +186,18 @@ fun SettlementsScreen(container: AppContainer, nav: NavHostController) {
                         modifier = Modifier.weight(1f),
                     ) {
                         val visible = state.visibleItems
-                        LazyColumn(
-                            Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = Spacing.sm),
-                            contentPadding = PaddingValues(top = Spacing.xs, bottom = 88.dp),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        AdaptiveContentFrame(
+                            maxWidth = 920.dp,
+                            compactHorizontalPadding = 0.dp,
+                            modifier = Modifier.fillMaxSize(),
                         ) {
+                            LazyColumn(
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = Spacing.sm),
+                                contentPadding = PaddingValues(top = Spacing.xs, bottom = 88.dp),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            ) {
                             if (visible.isEmpty()) {
                                 item {
                                     EmptyView(
@@ -235,6 +241,7 @@ fun SettlementsScreen(container: AppContainer, nav: NavHostController) {
                                         }
                                     }
                                 }
+                            }
                             }
                         }
                     }

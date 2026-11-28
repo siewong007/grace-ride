@@ -69,7 +69,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -94,6 +93,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -118,6 +118,8 @@ import org.pjstatecm.graceride.platform.CsvBuilder
 import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTabRow
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -146,6 +148,7 @@ fun AdminMembersScreen(
     SecureScreenEffect()
 
     val vm: AdminMembersViewModel = viewModel(
+        key = "admin-members-$initialTab-${initialStatus.orEmpty()}",
         factory = AdminMembersViewModel.factory(
             container = container,
             initialTab = initialTab,
@@ -319,7 +322,7 @@ fun AdminMembersScreen(
             Column(Modifier.fillMaxSize()) {
                 if (permittedTabs.size > 1) {
                     val selectedIdx = permittedTabs.indexOfFirst { it.first == state.tab }.coerceAtLeast(0)
-                    PrimaryTabRow(selectedTabIndex = selectedIdx) {
+                    AdaptiveTabRow(selectedTabIndex = selectedIdx) {
                         permittedTabs.forEach { (key, labelRes, count) ->
                             Tab(
                                 selected = state.tab == key,
@@ -357,56 +360,62 @@ fun AdminMembersScreen(
                     }
                 }
 
-                AnimatedContent(
-                    targetState = state.tab,
-                    transitionSpec = {
-                        val anim = animatorsEnabled()
-                        if (anim) {
-                            val fromIdx = permittedTabs.indexOfFirst { it.first == initialState }
-                            val toIdx = permittedTabs.indexOfFirst { it.first == targetState }
-                            val dir = if (fromIdx != -1 && toIdx != -1 && toIdx != fromIdx) {
-                                if (toIdx > fromIdx) 1 else -1
-                            } else {
-                                1
-                            }
-                            (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
-                                fadeIn(tween(180)))
-                                .togetherWith(
-                                    slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
-                                        fadeOut(tween(140)),
-                                )
-                        } else {
-                            fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
-                        }
-                    },
-                    label = "admin_members_tab",
+                AdaptiveContentFrame(
+                    maxWidth = 920.dp,
+                    compactHorizontalPadding = 0.dp,
                     modifier = Modifier.weight(1f),
-                ) { activeTab ->
-                    when (activeTab) {
-                        "members" -> MembersTab(
-                            state = state,
-                            me = currentMe,
-                            canEdit = canEditMembers,
-                            photoUrlFor = container::fileUrl,
-                            vm = vm,
-                            onEditUser = { user, isApprove ->
-                                vm.clearSaveError()
-                                editingUser = user to isApprove
-                            },
-                            hasBatchBar = hasBatchBar,
-                        )
-                        "invites" -> InvitesTab(
-                            state = state,
-                            me = currentMe,
-                            vm = vm,
-                            onCopied = { scope.launch { snackbar.showSnackbar(copiedMsg) } },
-                        )
-                        "recovery" -> RecoveryTab(
-                            state = state,
-                            me = currentMe,
-                            vm = vm,
-                            onCopied = { scope.launch { snackbar.showSnackbar(copiedMsg) } },
-                        )
+                ) {
+                    AnimatedContent(
+                        targetState = state.tab,
+                        transitionSpec = {
+                            val anim = animatorsEnabled()
+                            if (anim) {
+                                val fromIdx = permittedTabs.indexOfFirst { it.first == initialState }
+                                val toIdx = permittedTabs.indexOfFirst { it.first == targetState }
+                                val dir = if (fromIdx != -1 && toIdx != -1 && toIdx != fromIdx) {
+                                    if (toIdx > fromIdx) 1 else -1
+                                } else {
+                                    1
+                                }
+                                (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
+                                    fadeIn(tween(180)))
+                                    .togetherWith(
+                                        slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
+                                            fadeOut(tween(140)),
+                                    )
+                            } else {
+                                fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                            }
+                        },
+                        label = "admin_members_tab",
+                        modifier = Modifier.fillMaxSize(),
+                    ) { activeTab ->
+                        when (activeTab) {
+                            "members" -> MembersTab(
+                                state = state,
+                                me = currentMe,
+                                canEdit = canEditMembers,
+                                photoUrlFor = container::fileUrl,
+                                vm = vm,
+                                onEditUser = { user, isApprove ->
+                                    vm.clearSaveError()
+                                    editingUser = user to isApprove
+                                },
+                                hasBatchBar = hasBatchBar,
+                            )
+                            "invites" -> InvitesTab(
+                                state = state,
+                                me = currentMe,
+                                vm = vm,
+                                onCopied = { scope.launch { snackbar.showSnackbar(copiedMsg) } },
+                            )
+                            "recovery" -> RecoveryTab(
+                                state = state,
+                                me = currentMe,
+                                vm = vm,
+                                onCopied = { scope.launch { snackbar.showSnackbar(copiedMsg) } },
+                            )
+                        }
                     }
                 }
             }
@@ -677,8 +686,9 @@ private fun MembersTab(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        stringResource(
-                                            R.string.members_total_page,
+                                        pluralStringResource(
+                                            R.plurals.members_total_page_plural,
+                                            state.usersPage.total.toInt(),
                                             state.usersPage.total,
                                             state.usersPage.page,
                                             state.usersPage.totalPages,
@@ -845,6 +855,7 @@ private fun MembersTab(
                 Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
             ) {
                 Text(

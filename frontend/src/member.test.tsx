@@ -242,13 +242,18 @@ vi.mock('./auth', () => ({
   }),
 }));
 
+const useApiPaths: (string | null)[] = [];
+
 vi.mock('./api', () => ({
-  useApi: (path: string | null) => ({
-    data: path ? mockApiMap[path] ?? null : null,
-    loading: false,
-    error: null,
-    reload: vi.fn(),
-  }),
+  useApi: (path: string | null) => {
+    useApiPaths.push(path);
+    return {
+      data: path ? mockApiMap[path] ?? null : null,
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    };
+  },
   post: vi.fn().mockResolvedValue({ id: 101 }),
   put: vi.fn().mockResolvedValue({}),
   del: vi.fn().mockResolvedValue({}),
@@ -503,6 +508,25 @@ describe('EventDetail page', () => {
       mockApiMap['/events/10'] = saved;
       if (savedUpcoming === undefined) delete mockApiMap['/rides?scope=upcoming'];
       else mockApiMap['/rides?scope=upcoming'] = savedUpcoming;
+    }
+  });
+
+  it('does not request /events/:id/signups when can_see_signups and can_manage are false', () => {
+    useApiPaths.length = 0;
+    const saved = mockApiMap['/events/11'];
+    mockApiMap['/events/11'] = { ...(saved as object), can_manage: false, can_see_signups: false };
+    try {
+      render(
+        <MemoryRouter initialEntries={['/events/11']}>
+          <Routes>
+            <Route path="/events/:id" element={<EventDetail />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      expect(useApiPaths).toContain('/events/11');
+      expect(useApiPaths).not.toContain('/events/11/signups');
+    } finally {
+      mockApiMap['/events/11'] = saved;
     }
   });
 });

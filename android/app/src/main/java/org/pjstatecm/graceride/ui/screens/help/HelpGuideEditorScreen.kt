@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +31,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +69,7 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.SectionHeader
@@ -136,29 +139,37 @@ fun HelpGuideEditorScreen(
         },
         bottomBar = {
             if (!state.loading) {
-                Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
+                Surface(color = MaterialTheme.colorScheme.surface) {
                     Column(
                         Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .imePadding()
-                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            .imePadding(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        state.error?.let { err ->
-                            Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        }
-                        Button(
-                            onClick = {
-                                UiHaptics.confirm(view)
-                                vm.save(missingMsg)
-                            },
-                            enabled = !state.saving,
-                            colors = graceRidePrimaryButtonColors(),
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(
+                            Modifier
+                                .widthIn(max = 720.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                         ) {
-                            if (state.saving) InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
-                            else Text(stringResource(R.string.common_save))
+                            state.error?.let { err ->
+                                Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            }
+                            Button(
+                                onClick = {
+                                    UiHaptics.confirm(view)
+                                    vm.save(missingMsg)
+                                },
+                                enabled = !state.saving,
+                                colors = graceRidePrimaryButtonColors(),
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                            ) {
+                                if (state.saving) InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                                else Text(stringResource(R.string.common_save))
+                            }
                         }
                     }
                 }
@@ -176,8 +187,10 @@ fun HelpGuideEditorScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            AdaptiveContentFrame(maxWidth = 720.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             Surface(
                 color = if (state.completenessGaps == 0) c.successSoft else c.warningSoft,
                 shape = MaterialTheme.shapes.small,
@@ -397,6 +410,8 @@ fun HelpGuideEditorScreen(
                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(Spacing.xs))
                 Text(stringResource(R.string.help_guide_add_step))
+            }
+                }
             }
         }
     }

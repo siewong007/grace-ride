@@ -65,6 +65,7 @@ import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.SectionHeader
 import org.pjstatecm.graceride.ui.copyToClipboard
@@ -135,14 +136,19 @@ fun FamilyScreen(container: AppContainer, nav: NavHostController) {
         val family = familyData.family
         val isOwner = family != null && me?.id == family.ownerId
 
-        LazyColumn(
+        AdaptiveContentFrame(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = Spacing.sm),
-            contentPadding = PaddingValues(vertical = Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                .padding(padding),
+            maxWidth = 760.dp,
         ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = Spacing.sm),
+                contentPadding = PaddingValues(vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
             // 1. Proxy riders shortcut when member can book rides
             if (me?.can("rides") == true) {
                 item {
@@ -478,6 +484,7 @@ fun FamilyScreen(container: AppContainer, nav: NavHostController) {
                         }
                     }
                 }
+            }
             }
         }
     }

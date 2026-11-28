@@ -79,6 +79,7 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -251,11 +252,16 @@ fun AdminConsoleScreen(
                     onRefresh = { vm.refresh(silent = true) },
                     modifier = Modifier.fillMaxSize().padding(padding),
                 ) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-                        contentPadding = PaddingValues(Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    AdaptiveContentFrame(
+                        maxWidth = 920.dp,
+                        compactHorizontalPadding = 0.dp,
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+                            contentPadding = PaddingValues(Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        ) {
                         if (d != null) {
                             item {
                                 val todayFrac = if (d.todayTotal > 0) (d.todayConfirmed.toFloat() / d.todayTotal.toFloat()).coerceIn(0f, 1f) else 0f
@@ -496,6 +502,7 @@ fun AdminConsoleScreen(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }

@@ -139,11 +139,21 @@ pub(super) async fn list_users(
                "photo_file_id": photo, "avatar_color": color, "avatar_icon": icon,
                "family_name": family_name})
     };
-    let staff_select = "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
-                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id),
-                u.photo_file_id, u.avatar_color, u.avatar_icon,
-                (SELECT f.name FROM family_members fm JOIN families f ON f.id = fm.family_id WHERE fm.user_id = u.id)
-             FROM users u";
+    let staff_paged_prefix = "WITH paged AS (
+        SELECT sub.id, sub.name, sub.email, sub.phone, sub.roles, sub.status, sub.created_at,
+               sub.photo_file_id, sub.avatar_color, sub.avatar_icon,
+               ROW_NUMBER() OVER () AS _ord
+        FROM (
+            SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at,
+                   u.photo_file_id, u.avatar_color, u.avatar_icon
+            FROM users u";
+    let staff_paged_suffix = "SELECT p.id, p.name, p.email, p.phone, p.roles, p.status, p.created_at,
+            (SELECT COUNT(*) FROM passkeys pk WHERE pk.user_id = p.id),
+            (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id = gm.group_id WHERE gm.user_id = p.id),
+            p.photo_file_id, p.avatar_color, p.avatar_icon,
+            (SELECT f.name FROM family_members fm JOIN families f ON f.id = fm.family_id WHERE fm.user_id = p.id)
+        FROM paged p
+        ORDER BY p._ord";
     let picker_select = "SELECT u.id, u.name FROM users u";
 
     if q.page.is_some() || q.limit.is_some() {
@@ -166,7 +176,7 @@ pub(super) async fn list_users(
 
         let out: Vec<Value> = if staff {
             let sql = format!(
-                "{staff_select} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${}",
+                "{staff_paged_prefix} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${} ) sub ) {staff_paged_suffix}",
                 n + 1
             );
             let mut query = sqlx::query_as::<_, StaffRow>(sqlx::AssertSqlSafe(&*sql));
@@ -227,7 +237,9 @@ pub(super) async fn list_users(
 
     // Unpaged (member pickers): the same filters, applied before the cap.
     let out: Vec<Value> = if staff {
-        let sql = format!("{staff_select} WHERE {where_sql} ORDER BY {order} LIMIT 2000");
+        let sql = format!(
+            "{staff_paged_prefix} WHERE {where_sql} ORDER BY {order} LIMIT 2000 ) sub ) {staff_paged_suffix}"
+        );
         let mut query = sqlx::query_as::<_, StaffRow>(sqlx::AssertSqlSafe(&*sql));
         if let Some(l) = &like {
             query = query.bind(l);

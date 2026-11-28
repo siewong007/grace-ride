@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -88,6 +90,7 @@ import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -178,7 +181,7 @@ fun AdminAuditScreen(
             return@Scaffold
         }
 
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        AdaptiveContentFrame(maxWidth = 920.dp, compactHorizontalPadding = 0.dp, modifier = Modifier.fillMaxSize().padding(padding)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().navigationBarsPadding(),
                 contentPadding = PaddingValues(Spacing.sm),
@@ -279,10 +282,11 @@ fun AdminAuditScreen(
                 }
 
                 item {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        verticalAlignment = Alignment.CenterVertically,
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        itemVerticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             stringResource(
@@ -292,7 +296,6 @@ fun AdminAuditScreen(
                                 state.escalationCount,
                             ),
                             style = MaterialTheme.typography.bodySmall.tabular(),
-                            modifier = Modifier.weight(1f),
                         )
                         OutlinedButton(
                             onClick = {
@@ -423,6 +426,8 @@ fun AdminAuditScreen(
                 Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = Spacing.sm)
                     .padding(bottom = Spacing.md),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),

@@ -21,12 +21,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -62,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
@@ -70,6 +73,8 @@ import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTwoColumnRow
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.StatusPill
@@ -182,113 +187,178 @@ fun ReimbursementDetailScreen(
                                 .verticalScroll(rememberScrollState())
                                 .navigationBarsPadding()
                                 .padding(Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            ReimbursementStatusTimeline(status = r.status)
+                            AdaptiveContentFrame(maxWidth = 860.dp) {
+                                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                    ReimbursementStatusTimeline(status = r.status)
 
-                            if (r.reviewNote.isNotBlank()) {
-                                val bannerBg = if (r.status == "rejected") statusColors.dangerSoft else statusColors.warningSoft
-                                val bannerFg = if (r.status == "rejected") statusColors.danger else statusColors.warning
-                                Surface(
-                                    color = bannerBg,
-                                    shape = MaterialTheme.shapes.small,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Row(
-                                        Modifier.padding(Spacing.sm),
-                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                        verticalAlignment = Alignment.Top,
-                                    ) {
-                                        Icon(
-                                            Icons.Outlined.Info,
-                                            contentDescription = null,
-                                            tint = bannerFg,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Text(
-                                                stringResource(R.string.reimb_review_note),
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = bannerFg,
-                                            )
-                                            Text(
-                                                r.reviewNote,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = bannerFg,
-                                            )
+                                    if (r.reviewNote.isNotBlank()) {
+                                        val bannerBg = if (r.status == "rejected") statusColors.dangerSoft else statusColors.warningSoft
+                                        val bannerFg = if (r.status == "rejected") statusColors.danger else statusColors.warning
+                                        Surface(
+                                            color = bannerBg,
+                                            shape = MaterialTheme.shapes.small,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Row(
+                                                Modifier.padding(Spacing.sm),
+                                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                                verticalAlignment = Alignment.Top,
+                                            ) {
+                                                Icon(
+                                                    Icons.Outlined.Info,
+                                                    contentDescription = null,
+                                                    tint = bannerFg,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(
+                                                        stringResource(R.string.reimb_review_note),
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = bannerFg,
+                                                    )
+                                                    Text(
+                                                        r.reviewNote,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = bannerFg,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                            }
 
-                            OutlinedCard(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            Money.rm(r.amountCents),
-                                            style = MaterialTheme.typography.headlineSmall.tabular(),
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                        StatusPill(
-                                            text = reimbStatusLabel(r.status),
-                                            kind = reimbStatusKind(r.status),
-                                        )
-                                    }
-                                    Text(
-                                        "${reimbKindLabel(r.kind)} · ${r.user.name}",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                    if (r.description.isNotBlank()) {
-                                        Text(r.description, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    r.specialReason?.takeIf { it.isNotBlank() }?.let { reason ->
-                                        Text(reason, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                    r.eventTitle?.takeIf { it.isNotBlank() }?.let { ev ->
-                                        DetailLine(stringResource(R.string.reimb_event), ev)
-                                    }
-                                    r.rideRoute?.takeIf { it.isNotBlank() }?.let { rt ->
-                                        DetailLine(stringResource(R.string.reimb_ride_route), rt)
-                                    }
-                                    r.payeeName?.takeIf { it.isNotBlank() }?.let { pn ->
-                                        DetailLine(stringResource(R.string.reimb_payee), "$pn (${r.payeePhone.orEmpty()})")
-                                    }
-                                    r.reviewer?.takeIf { it.isNotBlank() }?.let { rev ->
-                                        DetailLine(stringResource(R.string.reimb_reviewer), rev)
-                                    }
-                                    r.paidRef?.takeIf { it.isNotBlank() }?.let { pref ->
-                                        DetailLine(stringResource(R.string.reimb_paid_ref), pref)
-                                    }
-                                    DetailLine(stringResource(R.string.reimb_submitted_at), KlTime.display(r.createdAt))
-                                }
-                            }
+                                    val cleanedRoute = r.rideRoute
+                                        ?.trim()
+                                        ?.removeSuffix("↔ ?")
+                                        ?.removeSuffix("→ ?")
+                                        ?.trim()
+                                        ?.takeIf { it.isNotEmpty() && it != "?" }
 
-                            r.receiptFileId?.let { rfid ->
-                                OutlinedCard(
-                                    onClick = { zoomReceipt = true },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(Modifier.padding(Spacing.xs), horizontalAlignment = Alignment.CenterHorizontally) {
-                                        AsyncImage(
-                                            model = container.fileUrl(rfid),
-                                            contentDescription = stringResource(R.string.reimb_receipt),
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(220.dp),
+                                    val claimCard: @Composable () -> Unit = {
+                                        OutlinedCard(Modifier.fillMaxWidth()) {
+                                            Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                                Row(
+                                                    Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Text(
+                                                        Money.rm(r.amountCents),
+                                                        style = MaterialTheme.typography.headlineSmall.tabular(),
+                                                        fontWeight = FontWeight.Bold,
+                                                    )
+                                                    StatusPill(
+                                                        text = reimbStatusLabel(r.status),
+                                                        kind = reimbStatusKind(r.status),
+                                                    )
+                                                }
+                                                Text(
+                                                    "${reimbKindLabel(r.kind)} · ${r.user.name}",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                )
+                                                if (r.description.isNotBlank()) {
+                                                    Text(r.description, style = MaterialTheme.typography.bodyMedium)
+                                                }
+                                                r.specialReason?.takeIf { it.isNotBlank() }?.let { reason ->
+                                                    Text(reason, style = MaterialTheme.typography.bodyMedium)
+                                                }
+                                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                                r.eventTitle?.takeIf { it.isNotBlank() }?.let { ev ->
+                                                    DetailLine(stringResource(R.string.reimb_event), ev)
+                                                }
+                                                cleanedRoute?.let { rt ->
+                                                    DetailLine(stringResource(R.string.reimb_ride_route), rt)
+                                                }
+                                                r.payeeName?.takeIf { it.isNotBlank() }?.let { pn ->
+                                                    DetailLine(stringResource(R.string.reimb_payee), "$pn (${r.payeePhone.orEmpty()})")
+                                                }
+                                                r.reviewer?.takeIf { it.isNotBlank() }?.let { rev ->
+                                                    DetailLine(stringResource(R.string.reimb_reviewer), rev)
+                                                }
+                                                r.paidRef?.takeIf { it.isNotBlank() }?.let { pref ->
+                                                    DetailLine(stringResource(R.string.reimb_paid_ref), pref)
+                                                }
+                                                DetailLine(stringResource(R.string.reimb_submitted_at), KlTime.display(r.createdAt))
+                                            }
+                                        }
+                                    }
+
+                                    val rfid = r.receiptFileId
+                                    if (rfid != null) {
+                                        val receiptCard: @Composable () -> Unit = {
+                                            var receiptState by remember(rfid) {
+                                                mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty)
+                                            }
+                                            val canZoom = receiptState is AsyncImagePainter.State.Success
+                                            OutlinedCard(
+                                                onClick = { if (canZoom) zoomReceipt = true },
+                                                enabled = canZoom,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) {
+                                                Column(
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(Spacing.xs),
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                                ) {
+                                                    val imageFailed = receiptState is AsyncImagePainter.State.Error
+                                                    val isLoading = receiptState is AsyncImagePainter.State.Loading ||
+                                                        receiptState is AsyncImagePainter.State.Empty
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(if (imageFailed) 96.dp else 220.dp),
+                                                        contentAlignment = Alignment.Center,
+                                                    ) {
+                                                        AsyncImage(
+                                                            model = container.fileUrl(rfid),
+                                                            contentDescription = stringResource(R.string.reimb_receipt),
+                                                            contentScale = ContentScale.Fit,
+                                                            onState = { receiptState = it },
+                                                            modifier = Modifier.fillMaxSize(),
+                                                        )
+                                                        if (isLoading) {
+                                                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                                                        } else if (imageFailed) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Outlined.BrokenImage,
+                                                                    contentDescription = null,
+                                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                    modifier = Modifier.size(20.dp),
+                                                                )
+                                                                Text(
+                                                                    stringResource(R.string.common_image_load_failed),
+                                                                    style = MaterialTheme.typography.bodySmall,
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    if (canZoom) {
+                                                        Text(
+                                                            stringResource(R.string.reimb_tap_zoom_receipt),
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        AdaptiveTwoColumnRow(
+                                            twoColumnBreakpoint = 680.dp,
+                                            first = { claimCard() },
+                                            second = { receiptCard() },
                                         )
-                                        Text(
-                                            stringResource(R.string.reimb_tap_zoom_receipt),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                                    } else {
+                                        claimCard()
                                     }
                                 }
                             }

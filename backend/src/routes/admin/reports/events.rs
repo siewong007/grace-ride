@@ -64,19 +64,54 @@ pub(in crate::routes::admin) async fn events_report(
         rides_unfilled: i64,
     }
 
-    let ev_rows: Vec<EvRow> = sqlx::query_as(
+    enum EvParam<'a> {
+        I64(i64),
+        Str(&'a str),
+    }
+    let build_ev_filters = |include_group: bool,
+                            group_mode: u8|
+     -> (String, String, String, Vec<EvParam<'_>>) {
+        let mut ev_cond = String::new();
+        let mut s_cond = String::new();
+        let mut r_cond = String::new();
+        let mut params: Vec<EvParam<'_>> = Vec::new();
+        if let Some(cid) = scope_creator {
+            params.push(EvParam::I64(cid));
+            ev_cond.push_str(&format!(" AND e.created_by = ${}", 2 + params.len()));
+        }
+        if let Some(k) = kind {
+            params.push(EvParam::Str(k));
+            ev_cond.push_str(&format!(" AND e.kind = ${}", 2 + params.len()));
+        }
+        if include_group {
+            if let Some(gid) = q.group_id {
+                params.push(EvParam::I64(gid));
+                let p = 2 + params.len();
+                match group_mode {
+                    0 => {
+                        ev_cond.push_str(&format!(
+                            " AND (EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = e.id AND eg.group_id = ${p}) OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id = e.id AND es.as_group_id = ${p}))"
+                        ));
+                        s_cond.push_str(&format!(" AND s.as_group_id = ${p}"));
+                        r_cond.push_str(&format!(" AND r.as_group_id = ${p}"));
+                    }
+                    1 => ev_cond.push_str(&format!(" AND s.as_group_id = ${p}")),
+                    _ => ev_cond.push_str(&format!(" AND vp.host_group_id = ${p}")),
+                }
+            }
+        }
+        (ev_cond, s_cond, r_cond, params)
+    };
+
+    let (ev_cond0, s_cond0, r_cond0, ev_params0) = build_ev_filters(true, 0);
+    let ev_sql = format!(
         "WITH filtered_events AS (
             SELECT e.id, e.title, e.kind, e.starts_at, e.status, e.created_by, u.name AS creator_name,
                    e.attendance_enabled
             FROM events e
             JOIN users u ON u.id = e.created_by
             WHERE e.status <> 'draft'
-              AND e.starts_at >= $1 AND e.starts_at < $2
-              AND ($3::BIGINT IS NULL OR e.created_by = $3)
-              AND ($4::TEXT IS NULL OR e.kind = $4)
-              AND ($5::BIGINT IS NULL
-                   OR EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = e.id AND eg.group_id = $5)
-                   OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id = e.id AND es.as_group_id = $5))
+              AND e.starts_at >= $1 AND e.starts_at < $2{ev_cond0}
          ),
          signup_agg AS (
             SELECT s.event_id,
@@ -88,7 +123,7 @@ pub(in crate::routes::admin) async fn events_report(
                    COUNT(*) FILTER (WHERE s.status = 'going' AND s.self_transport = 1)::BIGINT AS self_transport
             FROM event_signups s
             JOIN filtered_events fe ON fe.id = s.event_id
-            WHERE ($5::BIGINT IS NULL OR s.as_group_id = $5)
+            WHERE TRUE{s_cond0}
             GROUP BY s.event_id
          ),
          ride_agg AS (
@@ -97,7 +132,7 @@ pub(in crate::routes::admin) async fn events_report(
                    COUNT(*) FILTER (WHERE r.status NOT IN ('cancelled', 'no_show', 'alt_transport') AND r.driver_id IS NULL)::BIGINT AS rides_unfilled
             FROM rides r
             JOIN filtered_events fe ON fe.id = r.event_id
-            WHERE ($5::BIGINT IS NULL OR r.as_group_id = $5)
+            WHERE TRUE{r_cond0}
             GROUP BY r.event_id
          )
          SELECT fe.id, fe.title, fe.kind, fe.starts_at, fe.status, fe.created_by, fe.creator_name,
@@ -113,15 +148,17 @@ pub(in crate::routes::admin) async fn events_report(
          FROM filtered_events fe
          LEFT JOIN signup_agg sa ON sa.event_id = fe.id
          LEFT JOIN ride_agg ra ON ra.event_id = fe.id
-         ORDER BY fe.starts_at DESC, fe.id DESC",
-    )
-    .bind(&w.start)
-    .bind(&w.end)
-    .bind(scope_creator)
-    .bind(kind)
-    .bind(q.group_id)
-    .fetch_all(&st.db)
-    .await?;
+         ORDER BY fe.starts_at DESC, fe.id DESC"
+    );
+    let mut ev_q = sqlx::query_as::<_, EvRow>(sqlx::AssertSqlSafe(&*ev_sql))
+        .bind(&w.start)
+        .bind(&w.end);
+    for p in &ev_params0 {
+        ev_q = match p {
+            EvParam::I64(v) => ev_q.bind(*v),
+            EvParam::Str(s) => ev_q.bind(*s),
+        };
+    }
 
     #[derive(sqlx::FromRow)]
     struct GroupRow {
@@ -136,7 +173,8 @@ pub(in crate::routes::admin) async fn events_report(
         offer_drive: i64,
     }
 
-    let group_rows: Vec<GroupRow> = sqlx::query_as(
+    let (ev_cond1, _, _, ev_params1) = build_ev_filters(true, 1);
+    let group_sql = format!(
         "SELECT s.as_group_id AS group_id, g.name AS group_name,
                 COUNT(*) FILTER (WHERE s.status = 'going')::BIGINT AS going,
                 COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1)::BIGINT AS attended,
@@ -149,65 +187,113 @@ pub(in crate::routes::admin) async fn events_report(
          JOIN events e ON e.id = s.event_id
          LEFT JOIN groups g ON g.id = s.as_group_id
          WHERE e.status NOT IN ('draft', 'cancelled')
-           AND e.starts_at >= $1 AND e.starts_at < $2
-           AND ($3::BIGINT IS NULL OR e.created_by = $3)
-           AND ($4::TEXT IS NULL OR e.kind = $4)
-           AND ($5::BIGINT IS NULL OR s.as_group_id = $5)
+           AND e.starts_at >= $1 AND e.starts_at < $2{ev_cond1}
          GROUP BY s.as_group_id, g.name
-         ORDER BY going DESC, group_name ASC NULLS LAST",
-    )
-    .bind(&w.start)
-    .bind(&w.end)
-    .bind(scope_creator)
-    .bind(kind)
-    .bind(q.group_id)
-    .fetch_all(&st.db)
-    .await?;
+         ORDER BY going DESC, group_name ASC NULLS LAST"
+    );
+    let mut group_q = sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(&*group_sql))
+        .bind(&w.start)
+        .bind(&w.end);
+    for p in &ev_params1 {
+        group_q = match p {
+            EvParam::I64(v) => group_q.bind(*v),
+            EvParam::Str(s) => group_q.bind(*s),
+        };
+    }
 
-    let (visitor_passes_count,): (i64,) = sqlx::query_as(
+    let (ev_cond2, _, _, ev_params2) = build_ev_filters(true, 2);
+    let vp_sql = format!(
         "SELECT COUNT(*)::BIGINT
          FROM visitor_passes vp
          JOIN events e ON e.id = vp.event_id
          WHERE e.status NOT IN ('draft', 'cancelled')
-           AND e.starts_at >= $1 AND e.starts_at < $2
-           AND ($3::BIGINT IS NULL OR e.created_by = $3)
-           AND ($4::TEXT IS NULL OR e.kind = $4)
-           AND ($5::BIGINT IS NULL OR vp.host_group_id = $5)",
-    )
-    .bind(&w.start)
-    .bind(&w.end)
-    .bind(scope_creator)
-    .bind(kind)
-    .bind(q.group_id)
-    .fetch_one(&st.db)
-    .await?;
+           AND e.starts_at >= $1 AND e.starts_at < $2{ev_cond2}"
+    );
+    let mut vp_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*vp_sql))
+        .bind(&w.start)
+        .bind(&w.end);
+    for p in &ev_params2 {
+        vp_q = match p {
+            EvParam::I64(v) => vp_q.bind(*v),
+            EvParam::Str(s) => vp_q.bind(*s),
+        };
+    }
 
     let rides_global = u.traffic_is_global();
-    let plan_visitors_count: Option<i64> = if can_rides && q.group_id.is_none() {
-        let pv_scope: Option<i64> = if global_events && rides_global {
-            None
-        } else {
-            Some(u.id)
-        };
-        let (cnt,): (i64,) = sqlx::query_as(
+    let pv_fut = async {
+        if !(can_rides && q.group_id.is_none()) {
+            return Ok::<_, crate::error::AppError>(None);
+        }
+        let mut pv_cond = String::new();
+        let mut pv_params: Vec<EvParam<'_>> = Vec::new();
+        if !(global_events && rides_global) {
+            pv_params.push(EvParam::I64(u.id));
+            pv_cond.push_str(&format!(" AND e.created_by = ${}", 2 + pv_params.len()));
+        }
+        if let Some(k) = kind {
+            pv_params.push(EvParam::Str(k));
+            pv_cond.push_str(&format!(" AND e.kind = ${}", 2 + pv_params.len()));
+        }
+        let pv_sql = format!(
             "SELECT COUNT(*)::BIGINT
              FROM plan_visitors pv
              JOIN events e ON e.id = pv.event_id
              WHERE e.status NOT IN ('draft', 'cancelled')
-               AND e.starts_at >= $1 AND e.starts_at < $2
-               AND ($3::BIGINT IS NULL OR e.created_by = $3)
-               AND ($4::TEXT IS NULL OR e.kind = $4)",
-        )
-        .bind(&w.start)
-        .bind(&w.end)
-        .bind(pv_scope)
-        .bind(kind)
-        .fetch_one(&st.db)
-        .await?;
-        Some(cnt)
-    } else {
-        None
+               AND e.starts_at >= $1 AND e.starts_at < $2{pv_cond}"
+        );
+        let mut pq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*pv_sql))
+            .bind(&w.start)
+            .bind(&w.end);
+        for p in &pv_params {
+            pq = match p {
+                EvParam::I64(v) => pq.bind(*v),
+                EvParam::Str(s) => pq.bind(*s),
+            };
+        }
+        Ok(Some(pq.fetch_one(&st.db).await?))
     };
+
+    let prev_win = prev_period_window(&w);
+    let prev_sql = format!(
+        "WITH prev_ev AS (
+            SELECT e.id, e.attendance_enabled
+            FROM events e
+            WHERE e.status NOT IN ('draft', 'cancelled')
+              AND e.starts_at >= $1 AND e.starts_at < $2{ev_cond0}
+         )
+         SELECT
+            (SELECT COUNT(*) FROM prev_ev)::BIGINT,
+            COALESCE(COUNT(*) FILTER (WHERE s.status = 'going'), 0)::BIGINT,
+            COALESCE(COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT,
+            COALESCE(COUNT(*) FILTER (WHERE pe.attendance_enabled = 1 AND s.status = 'going'), 0)::BIGINT,
+            COALESCE(COUNT(*) FILTER (WHERE pe.attendance_enabled = 1 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT
+         FROM prev_ev pe
+         LEFT JOIN event_signups s ON s.event_id = pe.id{s_cond0}"
+    );
+    let prev_fut = async {
+        let Some(pw) = prev_win.as_ref() else {
+            return Ok::<_, crate::error::AppError>(None);
+        };
+        let mut pq =
+            sqlx::query_as::<_, (i64, i64, i64, i64, i64)>(sqlx::AssertSqlSafe(&*prev_sql))
+                .bind(&pw.start)
+                .bind(&pw.end);
+        for p in &ev_params0 {
+            pq = match p {
+                EvParam::I64(v) => pq.bind(*v),
+                EvParam::Str(s) => pq.bind(*s),
+            };
+        }
+        Ok(Some((pw.period_label.clone(), pq.fetch_one(&st.db).await?)))
+    };
+
+    let (ev_rows, group_rows, visitor_passes_count, plan_visitors_count, prev_ev_stats) = tokio::try_join!(
+        async { Ok::<_, crate::error::AppError>(ev_q.fetch_all(&st.db).await?) },
+        async { Ok::<_, crate::error::AppError>(group_q.fetch_all(&st.db).await?) },
+        async { Ok::<_, crate::error::AppError>(vp_q.fetch_one(&st.db).await?) },
+        pv_fut,
+        prev_fut,
+    )?;
 
     let mut events_count = 0_i64;
     let mut tracked_events_count = 0_i64;
@@ -335,48 +421,24 @@ pub(in crate::routes::admin) async fn events_report(
         })
         .collect();
 
-    let comparison = if let Some(pw) = prev_period_window(&w) {
-        let (
+    let comparison = if let Some((
+        prev_period,
+        (
             prev_events_count,
             prev_total_going,
             prev_total_attended,
             prev_tracked_going,
             prev_tracked_attended,
-        ): (i64, i64, i64, i64, i64) = sqlx::query_as(
-            "WITH prev_ev AS (
-                SELECT e.id, e.attendance_enabled
-                FROM events e
-                WHERE e.status NOT IN ('draft', 'cancelled')
-                  AND e.starts_at >= $1 AND e.starts_at < $2
-                  AND ($3::BIGINT IS NULL OR e.created_by = $3)
-                  AND ($4::TEXT IS NULL OR e.kind = $4)
-                  AND ($5::BIGINT IS NULL
-                       OR EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = e.id AND eg.group_id = $5)
-                       OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id = e.id AND es.as_group_id = $5))
-             )
-             SELECT
-                (SELECT COUNT(*) FROM prev_ev)::BIGINT,
-                COALESCE(COUNT(*) FILTER (WHERE s.status = 'going'), 0)::BIGINT,
-                COALESCE(COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT,
-                COALESCE(COUNT(*) FILTER (WHERE pe.attendance_enabled = 1 AND s.status = 'going'), 0)::BIGINT,
-                COALESCE(COUNT(*) FILTER (WHERE pe.attendance_enabled = 1 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT
-             FROM prev_ev pe
-             LEFT JOIN event_signups s ON s.event_id = pe.id AND ($5::BIGINT IS NULL OR s.as_group_id = $5)",
-        )
-        .bind(&pw.start)
-        .bind(&pw.end)
-        .bind(scope_creator)
-        .bind(kind)
-        .bind(q.group_id)
-        .fetch_one(&st.db)
-        .await?;
+        ),
+    )) = prev_ev_stats
+    {
         let prev_rate = if prev_tracked_going > 0 {
             (prev_tracked_attended * 100) / prev_tracked_going
         } else {
             0
         };
         json!({
-            "prev_period": pw.period_label,
+            "prev_period": prev_period,
             "events_count_delta": events_count - prev_events_count,
             "total_going_delta": total_going - prev_total_going,
             "total_attended_delta": total_attended - prev_total_attended,

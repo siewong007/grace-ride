@@ -80,6 +80,8 @@ export interface EventItem {
   can_unpublish?: boolean;
   /** May cancel it (the events page's delete permission). */
   can_cancel?: boolean;
+  /** Organiser or event-admin may view the full signup roster. */
+  can_see_signups?: boolean;
   /** Optional cover photo. */
   photo_file_id?: number | null;
   /** Whether the optional attendance module is enabled for this event. */

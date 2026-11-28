@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
@@ -90,11 +91,12 @@ fun TermsScreen(
     val listContent: @Composable (Modifier) -> Unit = { mod ->
         LazyColumn(
             mod.testTag("termsList"),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             contentPadding = PaddingValues(vertical = Spacing.sm),
         ) {
             item {
-                OutlinedCard(Modifier.fillMaxWidth()) {
+                OutlinedCard(Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
                     Column(Modifier.padding(Spacing.sm)) {
                         Text(stringResource(R.string.terms_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
                         Text(stringResource(R.string.terms_updated), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = Spacing.xxs))
@@ -104,7 +106,7 @@ fun TermsScreen(
             }
             items(sections.size) { i ->
                 val (title, body) = sections[i]
-                Column(Modifier.fillMaxWidth().padding(vertical = Spacing.xs)) {
+                Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(vertical = Spacing.xs)) {
                     Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                     Text(stringResource(body), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = Spacing.xxs))
                     HorizontalDivider(
@@ -117,14 +119,14 @@ fun TermsScreen(
                 item {
                     OutlinedButton(
                         onClick = onOpenLicenses,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(48.dp),
                     ) {
                         Text(stringResource(R.string.terms_open_licenses))
                     }
                 }
             } else {
                 item {
-                    OutlinedCard(Modifier.fillMaxWidth()) {
+                    OutlinedCard(Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -144,7 +146,7 @@ fun TermsScreen(
                     }
                 }
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                         error?.let {
                             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                         }

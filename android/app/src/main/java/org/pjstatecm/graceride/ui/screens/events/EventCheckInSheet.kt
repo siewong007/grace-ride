@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Button
@@ -59,6 +61,7 @@ fun EventPassQrSheet(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = Spacing.md)
                 .padding(bottom = Spacing.lg),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -139,6 +142,7 @@ fun EventCheckInSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = Spacing.md)
                 .padding(bottom = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),

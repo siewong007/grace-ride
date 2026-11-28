@@ -139,7 +139,7 @@ fun TripChatSheet(
                 }
                 else -> LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 220.dp, max = 420.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 120.dp, max = 420.dp),
                     contentPadding = PaddingValues(vertical = Spacing.xs),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {

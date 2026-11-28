@@ -374,7 +374,9 @@ async fn list_traffic_plans(State(st): State<AppState>, u: CurrentUser) -> AppRe
     let today = crate::util::today_local().format("%Y-%m-%d").to_string();
     let cutoff = format!("{today}T00:00");
     let now_str = now();
-    let scope_cond = if u.traffic_is_global() {
+    let global = u.traffic_is_global();
+    let cutoff_p = if global { "$1" } else { "$2" };
+    let scope_cond = if global {
         "TRUE".to_string()
     } else {
         "e.created_by = $1".to_string()
@@ -402,7 +404,28 @@ async fn list_traffic_plans(State(st): State<AppState>, u: CurrentUser) -> AppRe
     }
 
     let sql = format!(
-        "SELECT e.id, e.title, e.kind, e.icon, e.starts_at, e.location, e.status,
+        "WITH page_events AS (
+             SELECT sub.id, sub.title, sub.kind, sub.icon, sub.starts_at, sub.location, sub.status,
+                    sub.area_id, sub.mileage_claimable, ROW_NUMBER() OVER () AS _ord
+             FROM (
+                 SELECT e.id, e.title, e.kind, e.icon, e.starts_at, e.location, e.status,
+                        e.area_id, e.mileage_claimable
+                 FROM events e
+                 WHERE {scope_cond}
+                   AND (
+                       (e.status = 'published' AND e.starts_at >= {cutoff_p})
+                       OR EXISTS (
+                           SELECT 1 FROM event_plan_drafts d
+                           WHERE d.event_id = e.id AND d.status IN ('draft', 'pending_approval', 'returned')
+                       )
+                   )
+                 ORDER BY (e.starts_at < {cutoff_p}) ASC,
+                          CASE WHEN e.starts_at < {cutoff_p} THEN NULL ELSE e.starts_at END ASC,
+                          e.starts_at DESC, e.id ASC
+                 LIMIT 100
+             ) sub
+         )
+         SELECT e.id, e.title, e.kind, e.icon, e.starts_at, e.location, e.status,
                 ea.name AS area_name,
                 eg_agg.groups AS groups,
                 e.mileage_claimable,
@@ -413,7 +436,7 @@ async fn list_traffic_plans(State(st): State<AppState>, u: CurrentUser) -> AppRe
                 COALESCE(d_agg.draft_count, 0)::BIGINT AS draft_count,
                 COALESCE(d_agg.pending_draft_count, 0)::BIGINT AS pending_draft_count,
                 COALESCE(d_agg.returned_draft_count, 0)::BIGINT AS returned_draft_count
-         FROM events e
+         FROM page_events e
          LEFT JOIN areas ea ON ea.id = e.area_id
          LEFT JOIN LATERAL (
              SELECT string_agg(g.name, '、') AS groups
@@ -434,25 +457,14 @@ async fn list_traffic_plans(State(st): State<AppState>, u: CurrentUser) -> AppRe
                     COUNT(*) FILTER (WHERE d.status = 'returned') AS returned_draft_count
              FROM event_plan_drafts d WHERE d.event_id = e.id
          ) d_agg ON TRUE
-         WHERE {scope_cond}
-           AND (
-               (e.status = 'published' AND e.starts_at >= $2)
-               OR EXISTS (
-                   SELECT 1 FROM event_plan_drafts d
-                   WHERE d.event_id = e.id AND d.status IN ('draft', 'pending_approval', 'returned')
-               )
-           )
-         ORDER BY (e.starts_at < $2) ASC,
-                  CASE WHEN e.starts_at < $2 THEN NULL ELSE e.starts_at END ASC,
-                  e.starts_at DESC, e.id ASC
-         LIMIT 100"
+         ORDER BY e._ord"
     );
 
-    let rows = sqlx::query_as::<_, TrafficEventRow>(sqlx::AssertSqlSafe(&*sql))
-        .bind(u.id)
-        .bind(&cutoff)
-        .fetch_all(&st.db)
-        .await?;
+    let mut q_plans = sqlx::query_as::<_, TrafficEventRow>(sqlx::AssertSqlSafe(&*sql));
+    if !global {
+        q_plans = q_plans.bind(u.id);
+    }
+    let rows = q_plans.bind(&cutoff).fetch_all(&st.db).await?;
 
     let event_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let draft_rows: Vec<drafts::DraftRow> = if event_ids.is_empty() {

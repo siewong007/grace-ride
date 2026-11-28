@@ -60,6 +60,7 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -241,13 +242,18 @@ fun ReimbursementsScreen(container: AppContainer, nav: NavHostController) {
                             onRefresh = vm::refresh,
                             modifier = Modifier.weight(1f),
                         ) {
-                            LazyColumn(
-                                Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = Spacing.sm),
-                                contentPadding = PaddingValues(top = Spacing.xs, bottom = 88.dp),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            AdaptiveContentFrame(
+                                maxWidth = 920.dp,
+                                compactHorizontalPadding = 0.dp,
+                                modifier = Modifier.fillMaxSize(),
                             ) {
+                                LazyColumn(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = Spacing.sm),
+                                    contentPadding = PaddingValues(top = Spacing.xs, bottom = 88.dp),
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                ) {
                                 if (state.items.isEmpty()) {
                                     item {
                                         EmptyView(
@@ -300,6 +306,7 @@ fun ReimbursementsScreen(container: AppContainer, nav: NavHostController) {
                                             }
                                         }
                                     }
+                                }
                                 }
                             }
                         }

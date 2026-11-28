@@ -95,6 +95,7 @@ import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.SkeletonLoadingList
@@ -293,13 +294,18 @@ fun AdminReimbursementsScreen(
                     onRefresh = vm::refresh,
                     modifier = Modifier.weight(1f),
                 ) {
-                    LazyColumn(
-                        Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = Spacing.sm),
-                        contentPadding = PaddingValues(vertical = Spacing.xs),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    AdaptiveContentFrame(
+                        maxWidth = 920.dp,
+                        compactHorizontalPadding = 0.dp,
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        LazyColumn(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = Spacing.sm),
+                            contentPadding = PaddingValues(vertical = Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
                         if (state.tab == "batches") {
                             if (me?.can("admin_reimb_pay", "update") == true) {
                                 item(key = "batch_creator") {
@@ -433,6 +439,7 @@ fun AdminReimbursementsScreen(
                                         }
                                     }
                                 }
+                            }
                             }
                         }
                     }

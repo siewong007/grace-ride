@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import '../../styles/planTransport.css';
@@ -14,10 +14,10 @@ import {
   RotateCcw,
   Route,
 } from 'lucide-react';
-import { post, useApi } from '../../api';
+import { isSessionLocked, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { canApprovePlan } from '../../perms';
-import type { AdminCounts } from '../../staffNav';
+import { useStaffNav, type AdminCounts } from '../../staffNav';
 import {
   Button,
   Card,
@@ -140,7 +140,23 @@ export default function TrafficHub() {
   const canManageAreas = can('admin_areas');
   const canAreas = canAreaPhotos || canFares || canManageAreas;
 
-  const dash = useApi<TrafficDashCounts>(can('admin_dashboard') ? '/admin/dashboard' : null, 30000);
+  const staffNav = useStaffNav();
+  const canDash = can('admin_dashboard');
+  const standaloneDash = useApi<TrafficDashCounts>(
+    !staffNav.fromContext && canDash ? '/admin/dashboard' : null,
+    30000,
+  );
+  const dashData = (staffNav.fromContext ? staffNav.counts : standaloneDash.data) as TrafficDashCounts | null;
+  const reloadDash = staffNav.fromContext ? staffNav.reloadDash : standaloneDash.reload;
+  useEffect(() => {
+    if (!staffNav.fromContext || !canDash) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible' && !isSessionLocked()) {
+        void reloadDash();
+      }
+    }, 30000);
+    return () => clearInterval(t);
+  }, [staffNav.fromContext, canDash, reloadDash]);
   const plans = useApi<TrafficEventPlan[]>(canPlans ? '/admin/traffic/plans' : null, 30000);
   const rideDrafts = useApi<HubRideDraft[]>(canRides ? '/admin/ride-drafts' : null, 30000);
 
@@ -148,34 +164,34 @@ export default function TrafficHub() {
     () =>
       plans.data != null
         ? plans.data.filter((e) => e.pending_draft_count > 0).length
-        : (dash.data?.pending_plan_drafts ?? 0),
-    [plans.data, dash.data?.pending_plan_drafts],
+        : (dashData?.pending_plan_drafts ?? 0),
+    [plans.data, dashData?.pending_plan_drafts],
   );
   const returnedPlanCount = useMemo(
     () =>
       plans.data != null
         ? isLead
           ? plans.data.filter((e) => e.returned_draft_count > 0).length
-          : (dash.data?.my_returned_plan_drafts ?? 0)
-        : (dash.data?.my_returned_plan_drafts ?? 0),
-    [plans.data, dash.data?.my_returned_plan_drafts, isLead],
+          : (dashData?.my_returned_plan_drafts ?? 0)
+        : (dashData?.my_returned_plan_drafts ?? 0),
+    [plans.data, dashData?.my_returned_plan_drafts, isLead],
   );
   const pendingRideDraftCount = useMemo(
     () =>
       rideDrafts.data != null
         ? rideDrafts.data.filter((d) => d.status === 'pending_approval').length
-        : (dash.data?.pending_ride_drafts ?? 0),
-    [rideDrafts.data, dash.data?.pending_ride_drafts],
+        : (dashData?.pending_ride_drafts ?? 0),
+    [rideDrafts.data, dashData?.pending_ride_drafts],
   );
   const returnedRideDraftCount = useMemo(
     () =>
       rideDrafts.data != null
         ? rideDrafts.data.filter((d) => d.status === 'returned' && d.created_by.id === me?.id).length
-        : (dash.data?.my_returned_ride_drafts ?? 0),
-    [rideDrafts.data, dash.data?.my_returned_ride_drafts, me?.id],
+        : (dashData?.my_returned_ride_drafts ?? 0),
+    [rideDrafts.data, dashData?.my_returned_ride_drafts, me?.id],
   );
 
-  const liveCount = dash.data?.live_drivers ?? 0;
+  const liveCount = dashData?.live_drivers ?? 0;
 
   const tabs: TabItem[] = useMemo(() => {
     const list: TabItem[] = [];
@@ -190,7 +206,7 @@ export default function TrafficHub() {
     }
     if (canRides) {
       const c = isLead
-        ? pendingRideDraftCount + (dash.data?.pending_approval ?? 0) + (dash.data?.no_driver ?? 0)
+        ? pendingRideDraftCount + (dashData?.pending_approval ?? 0) + (dashData?.no_driver ?? 0)
         : returnedRideDraftCount;
       list.push({
         value: 'rides',
@@ -230,8 +246,8 @@ export default function TrafficHub() {
     returnedPlanCount,
     pendingRideDraftCount,
     returnedRideDraftCount,
-    dash.data?.pending_approval,
-    dash.data?.no_driver,
+    dashData?.pending_approval,
+    dashData?.no_driver,
     liveCount,
     t,
   ]);
@@ -355,7 +371,7 @@ export default function TrafficHub() {
     );
     if (res !== undefined) {
       rideDrafts.reload();
-      dash.reload();
+      reloadDash();
     }
   };
 
@@ -372,7 +388,7 @@ export default function TrafficHub() {
       setReturningRideDraft(null);
       setReturnNotes('');
       rideDrafts.reload();
-      dash.reload();
+      reloadDash();
     }
   };
 

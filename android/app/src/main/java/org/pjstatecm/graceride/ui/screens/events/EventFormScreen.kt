@@ -72,6 +72,7 @@ import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.GroupTree
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.EventIcon
@@ -165,14 +166,17 @@ fun EventFormScreen(
             )
             else -> {
                 val errText = state.error ?: state.errorRes?.let { stringResource(it) }
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(horizontal = Spacing.sm),
-                    contentPadding = PaddingValues(vertical = Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                AdaptiveContentFrame(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    maxWidth = 720.dp,
                 ) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = Spacing.sm),
+                        contentPadding = PaddingValues(vertical = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
                     if (state.isEditingDraft) {
                         item {
                             CalloutBanner(
@@ -632,6 +636,7 @@ fun EventFormScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

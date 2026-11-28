@@ -32,24 +32,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = unknown>(
-  path: string,
-  opts: { method?: string; body?: unknown; signal?: AbortSignal } = {},
-): Promise<T> {
-  const acceptLanguage = i18n.language || 'zh';
-  const init: RequestInit = {
-    method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
-    headers:
-      opts.body !== undefined
-        ? { 'Accept-Language': acceptLanguage, 'content-type': 'application/json' }
-        : { 'Accept-Language': acceptLanguage },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    credentials: 'same-origin',
-  };
-  if (opts.signal !== undefined) {
-    init.signal = opts.signal;
-  }
-  const res = await fetch(`/api${path}`, init);
+async function parseApiResponse<T>(path: string, res: Response): Promise<T> {
   const text = await res.text();
   let data: ErrorBody = null;
   if (text) {
@@ -77,6 +60,100 @@ export async function api<T = unknown>(
     }
     throw new ApiError(res.status, apiMessage(data, 'network'), data?.code);
   }
+  return data as T;
+}
+
+type InflightGet = {
+  controller: AbortController;
+  waiters: number;
+  promise: Promise<unknown>;
+};
+
+const inflightGets = new Map<string, InflightGet>();
+
+function fetchGetShared<T>(path: string, signal?: AbortSignal): Promise<T> {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+  const acceptLanguage = i18n.language || 'zh';
+  const key = `${acceptLanguage}\0${path}`;
+  let entry = inflightGets.get(key);
+  if (!entry) {
+    const controller = new AbortController();
+    const promise = fetch(`/api${path}`, {
+      method: 'GET',
+      headers: { 'Accept-Language': acceptLanguage },
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then((res) => parseApiResponse<T>(path, res))
+      .finally(() => {
+        if (inflightGets.get(key) === entry) {
+          inflightGets.delete(key);
+        }
+      });
+    entry = { controller, waiters: 0, promise };
+    inflightGets.set(key, entry);
+  }
+  entry.waiters++;
+  const activeEntry = entry;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      activeEntry.waiters = Math.max(0, activeEntry.waiters - 1);
+      if (activeEntry.waiters === 0) {
+        if (inflightGets.get(key) === activeEntry) {
+          inflightGets.delete(key);
+        }
+        activeEntry.controller.abort();
+      }
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    activeEntry.promise.then(
+      (data) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        resolve(data as T);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+export async function api<T = unknown>(
+  path: string,
+  opts: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<T> {
+  const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
+  if (method === 'GET' && opts.body === undefined) {
+    return fetchGetShared<T>(path, opts.signal);
+  }
+  const acceptLanguage = i18n.language || 'zh';
+  const init: RequestInit = {
+    method,
+    headers:
+      opts.body !== undefined
+        ? { 'Accept-Language': acceptLanguage, 'content-type': 'application/json' }
+        : { 'Accept-Language': acceptLanguage },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    credentials: 'same-origin',
+  };
+  if (opts.signal !== undefined) {
+    init.signal = opts.signal;
+  }
+  const res = await fetch(`/api${path}`, init);
+  const data = await parseApiResponse<T>(path, res);
   if (path.startsWith('/auth/logout')) {
     clearClientSessionStorage();
     try {
@@ -88,7 +165,7 @@ export async function api<T = unknown>(
       window.dispatchEvent(new Event('gr:push-reset'));
     }
   }
-  return data as T;
+  return data;
 }
 
 export const post = <T = unknown>(path: string, body: unknown = {}) => api<T>(path, { method: 'POST', body });
@@ -314,15 +391,22 @@ export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: st
       skipped = 0;
       reload();
     }, pollMs);
+    let sseTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = subscribe((kind) => {
       if (kind.startsWith('unread:')) return;
       const filter = streamKindsRef.current;
       if (filter && !filter.includes(kind)) return;
-      void reload();
+      // Server actions often emit 'notify' and 'chat' within tens of milliseconds; coalesce into one reload.
+      if (sseTimer !== null) clearTimeout(sseTimer);
+      sseTimer = setTimeout(() => {
+        sseTimer = null;
+        void reload();
+      }, 150);
     });
     return () => {
       window.removeEventListener('gr:session-unlocked', onUnlocked);
       clearInterval(t);
+      if (sseTimer !== null) clearTimeout(sseTimer);
       unsub();
       abortRef.current?.abort();
       abortRef.current = null;

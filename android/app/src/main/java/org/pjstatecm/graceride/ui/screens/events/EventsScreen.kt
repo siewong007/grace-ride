@@ -23,7 +23,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DirectionsCar
@@ -42,8 +44,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -70,6 +70,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTabRow
+import org.pjstatecm.graceride.ui.components.NotificationBellButton
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -192,27 +195,14 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                             Text(stringResource(R.string.event_create_btn), style = MaterialTheme.typography.labelLarge)
                         }
                     }
-                    IconButton(
+                    NotificationBellButton(
+                        unreadCount = unreadCount,
                         onClick = { nav.navigate(AppRoute.Notifications) },
+                        contentDescription = stringResource(R.string.notif_title),
                         modifier = Modifier.semantics {
                             if (unreadState != null) stateDescription = unreadState
                         },
-                    ) {
-                        BadgedBox(
-                            badge = {
-                                if (unreadCount > 0) {
-                                    Badge {
-                                        Text(if (unreadCount > 99) "99+" else unreadCount.toString())
-                                    }
-                                }
-                            },
-                        ) {
-                            Icon(
-                                Icons.Outlined.Notifications,
-                                contentDescription = stringResource(R.string.notif_title),
-                            )
-                        }
-                    }
+                    )
                 }
             }
             val tabItems: @Composable () -> Unit = {
@@ -239,14 +229,12 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                     )
                 }
             }
-            if (canCreateEvent) {
-                PrimaryScrollableTabRow(selectedTabIndex = state.tab.coerceIn(0, 3), edgePadding = Spacing.xs) {
-                    tabItems()
-                }
-            } else {
-                PrimaryTabRow(selectedTabIndex = state.tab.coerceIn(0, 2)) {
-                    tabItems()
-                }
+            AdaptiveTabRow(
+                selectedTabIndex = state.tab.coerceIn(0, if (canCreateEvent) 3 else 2),
+                scrollableBelow = if (canCreateEvent) 560.dp else 400.dp,
+                edgePadding = Spacing.xs,
+            ) {
+                tabItems()
             }
 
             AnimatedOfflineBanner(
@@ -259,24 +247,25 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                 tabSnapshots[state.tab] = state
             }
 
-            AnimatedContent(
-                targetState = state.tab,
-                transitionSpec = {
-                    if (animatorsEnabled()) {
-                        val dir = if (targetState > initialState) 1 else -1
-                        (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
-                            fadeIn(tween(180)))
-                            .togetherWith(
-                                slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
-                                    fadeOut(tween(140)),
-                            )
-                    } else {
-                        fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
-                    }
-                },
-                label = "events_tab",
-                modifier = Modifier.weight(1f),
-            ) { tab ->
+            AdaptiveContentFrame(maxWidth = 920.dp, compactHorizontalPadding = 0.dp, modifier = Modifier.weight(1f)) {
+                AnimatedContent(
+                    targetState = state.tab,
+                    transitionSpec = {
+                        if (animatorsEnabled()) {
+                            val dir = if (targetState > initialState) 1 else -1
+                            (slideInHorizontally(tween(240, easing = GraceRideSpringEasing)) { it * dir } +
+                                fadeIn(tween(180)))
+                                .togetherWith(
+                                    slideOutHorizontally(tween(220, easing = GraceRideSpringEasing)) { (-it / 3) * dir } +
+                                        fadeOut(tween(140)),
+                                )
+                        } else {
+                            fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                        }
+                    },
+                    label = "events_tab",
+                    modifier = Modifier.fillMaxSize(),
+                ) { tab ->
                 val tabState = if (tab == state.tab) state else (tabSnapshots[tab] ?: state)
                 val innerMode = when {
                     tabState.loading -> "loading"
@@ -352,6 +341,7 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                     }
                 }
             }
+            }
         }
         SnackbarHost(
             hostState = snackbar,
@@ -410,6 +400,7 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                 Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = Spacing.sm)
                     .padding(bottom = Spacing.md),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),

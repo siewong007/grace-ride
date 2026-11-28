@@ -50,6 +50,7 @@ import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.notifications.RealtimeEvent
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -210,12 +211,17 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
                         LaunchedEffect(shouldLoadMore) {
                             if (shouldLoadMore) vm.loadMore()
                         }
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            contentPadding = PaddingValues(vertical = Spacing.xs),
+                        AdaptiveContentFrame(
+                            maxWidth = 920.dp,
+                            compactHorizontalPadding = 0.dp,
+                            modifier = Modifier.fillMaxSize(),
                         ) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                contentPadding = PaddingValues(vertical = Spacing.xs),
+                            ) {
                             if (state.rides.isEmpty()) {
                                 item {
                                     EmptyView(
@@ -246,6 +252,7 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
                                         )
                                     }
                                 }
+                            }
                             }
                         }
                     }

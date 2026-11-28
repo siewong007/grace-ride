@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -139,11 +140,15 @@ fun InviteScreen(
                         .fillMaxSize()
                         .padding(padding)
                         .padding(horizontal = Spacing.sm),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     contentPadding = PaddingValues(vertical = Spacing.sm),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     item {
-                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Column(
+                            Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
                             GraceRideWordmark()
                             Text(
                                 stringResource(R.string.invite_step_of, visibleStep, totalSteps),
@@ -164,6 +169,7 @@ fun InviteScreen(
                                 text = stringResource(R.string.invite_family_prefix, preview!!.familyName!!),
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                             )
                         }
                     }
@@ -171,7 +177,7 @@ fun InviteScreen(
                     when (state.step) {
                         1 -> item {
                             OutlinedCard(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             ) {
                                 Column(
@@ -236,7 +242,7 @@ fun InviteScreen(
                         2 -> {
                             item {
                                 OutlinedCard(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                                 ) {
                                     Column(
@@ -286,7 +292,7 @@ fun InviteScreen(
                             }
                             item {
                                 OutlinedCard(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                                 ) {
                                     Row(
@@ -311,7 +317,7 @@ fun InviteScreen(
                                 }
                             }
                             item {
-                                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                     errText?.let {
                                         CalloutBanner(
                                             icon = Icons.Outlined.WarningAmber,
@@ -353,7 +359,7 @@ fun InviteScreen(
 
                         else -> item {
                             OutlinedCard(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             ) {
                                 Column(

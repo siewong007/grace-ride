@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -59,7 +60,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -81,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -101,6 +102,8 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTabRow
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.LoadingView
@@ -211,7 +214,10 @@ fun AdminSettingsScreen(
                 Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.navigationBarsPadding().imePadding()) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Box(Modifier.fillMaxWidth().padding(horizontal = Spacing.sm, vertical = Spacing.xs)) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             Button(
                                 onClick = {
                                     UiHaptics.confirm(view)
@@ -220,7 +226,7 @@ fun AdminSettingsScreen(
                                 },
                                 enabled = !state.busy && (state.tab == "alerts" || !systemInvalid),
                                 colors = graceRidePrimaryButtonColors(),
-                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                             ) {
                                 if (state.busy) {
                                     InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
@@ -245,7 +251,7 @@ fun AdminSettingsScreen(
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (tabs.size > 1) {
                 val selIdx = tabs.indexOfFirst { it.first == state.tab }.coerceAtLeast(0)
-                PrimaryTabRow(selectedTabIndex = selIdx) {
+                AdaptiveTabRow(selectedTabIndex = selIdx, scrollableBelow = 600.dp) {
                     tabs.forEach { (key, res) ->
                         Tab(
                             selected = state.tab == key,
@@ -259,46 +265,48 @@ fun AdminSettingsScreen(
             if (isInitialLoading) {
                 Box(Modifier.fillMaxSize()) { LoadingView() }
             } else {
-                when (state.tab) {
-                    "alerts" -> AlertsSettingsTab(
-                        state = state,
-                        canUpdate = canUpdateSettings,
-                        vm = vm,
-                        onCopy = { label, value ->
-                            copyToClipboard(context, label, value)
-                            scope.launch { snackbar.showSnackbar(copiedMsg) }
-                        },
-                    )
-                    "groups" -> GroupsSettingsTab(
-                        state = state,
-                        canCreate = me?.can("admin_groups", "create") == true,
-                        canUpdate = me?.can("admin_groups", "update") == true,
-                        canDelete = me?.can("admin_groups", "delete") == true,
-                        onOpenCreate = {
-                            groupNameInput = ""
-                            groupDescInput = ""
-                            groupParentId = null
-                            showCreateGroup = true
-                        },
-                        onEditGroup = { g ->
-                            groupNameInput = g.name
-                            groupDescInput = g.description
-                            groupParentId = g.parentId
-                            editingGroup = g
-                        },
-                        onManageMembers = { g ->
-                            groupMembersSearch = ""
-                            vm.openGroupMembers(g)
-                        },
-                        onDeleteGroup = { g -> deleteGroupTarget = g },
-                    )
-                    else -> SystemSettingsTab(
-                        state = state,
-                        canUpdate = canUpdateSettings,
-                        me = me,
-                        vm = vm,
-                        nav = nav,
-                    )
+                AdaptiveContentFrame(maxWidth = 760.dp, compactHorizontalPadding = 0.dp, modifier = Modifier.weight(1f)) {
+                    when (state.tab) {
+                        "alerts" -> AlertsSettingsTab(
+                            state = state,
+                            canUpdate = canUpdateSettings,
+                            vm = vm,
+                            onCopy = { label, value ->
+                                copyToClipboard(context, label, value)
+                                scope.launch { snackbar.showSnackbar(copiedMsg) }
+                            },
+                        )
+                        "groups" -> GroupsSettingsTab(
+                            state = state,
+                            canCreate = me?.can("admin_groups", "create") == true,
+                            canUpdate = me?.can("admin_groups", "update") == true,
+                            canDelete = me?.can("admin_groups", "delete") == true,
+                            onOpenCreate = {
+                                groupNameInput = ""
+                                groupDescInput = ""
+                                groupParentId = null
+                                showCreateGroup = true
+                            },
+                            onEditGroup = { g ->
+                                groupNameInput = g.name
+                                groupDescInput = g.description
+                                groupParentId = g.parentId
+                                editingGroup = g
+                            },
+                            onManageMembers = { g ->
+                                groupMembersSearch = ""
+                                vm.openGroupMembers(g)
+                            },
+                            onDeleteGroup = { g -> deleteGroupTarget = g },
+                        )
+                        else -> SystemSettingsTab(
+                            state = state,
+                            canUpdate = canUpdateSettings,
+                            me = me,
+                            vm = vm,
+                            nav = nav,
+                        )
+                    }
                 }
             }
         }
@@ -490,7 +498,7 @@ fun AdminSettingsScreen(
                 if (state.groupMembersLoading) {
                     Box(Modifier.fillMaxWidth().height(160.dp)) { LoadingView() }
                 } else {
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                    LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 360.dp)) {
                         items(filteredUsers, key = { it.id }) { u ->
                             Row(
                                 Modifier
@@ -942,21 +950,6 @@ private fun GroupsSettingsTab(
         contentPadding = PaddingValues(Spacing.sm),
         verticalArrangement = Arrangement.spacedBy(Spacing.xs),
     ) {
-        if (canCreate) {
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Button(
-                        onClick = onOpenCreate,
-                        colors = graceRidePrimaryButtonColors(),
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(Spacing.xxs))
-                        Text(stringResource(R.string.settings_add_group))
-                    }
-                }
-            }
-        }
         if (ordered.isEmpty()) {
             item { EmptyView(text = stringResource(R.string.settings_empty_groups)) }
         } else {
@@ -978,7 +971,7 @@ private fun GroupsSettingsTab(
                             val meta = buildList {
                                 if (group.isAll) add(stringResource(R.string.settings_all_members))
                                 else if (group.isVisitor) add(stringResource(R.string.settings_visitor_pill))
-                                else add(stringResource(R.string.settings_member_count, group.memberCount))
+                                else add(pluralStringResource(R.plurals.member_count_plural, group.memberCount.toInt(), group.memberCount))
                                 if (!parentName.isNullOrBlank()) add(stringResource(R.string.settings_part_of_name, parentName))
                                 if (group.description.isNotBlank() && !group.isVisitor) add(group.description)
                             }.joinToString(" · ")

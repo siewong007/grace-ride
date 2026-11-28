@@ -12,7 +12,7 @@ import { fmtAgo, fmtDateTime, fmtDay, fmtTime, greeting, localDate, RIDE_STATUS,
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
 import { ensureLocaleNamespaces } from '../i18n';
 import { canApprovePlan } from '../perms';
-import type { AdminCounts } from '../staffNav';
+import { useStaffNav, type AdminCounts } from '../staffNav';
 import type { EventItem } from './Events';
 import { GettingStarted } from '../components/Onboarding';
 
@@ -88,9 +88,11 @@ export default function Home() {
   nextWeek.setDate(nextWeek.getDate() + 7);
   const nextWeekStr = localDate(nextWeek);
   const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${nextWeekStr}` : null);
-  const adminCounts = useApi<AdminCounts>(
-    me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
+  const staffNav = useStaffNav();
+  const standaloneAdminCounts = useApi<AdminCounts>(
+    !staffNav.fromContext && me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
   );
+  const adminCountsData = staffNav.fromContext ? staffNav.counts : standaloneAdminCounts.data;
 
   useEffect(() => {
     if (!me?.id) return;
@@ -120,10 +122,10 @@ export default function Home() {
   const awaitingDriveConfirm = allDriving.filter((r) => r.status === 'pending_driver_confirm');
   const toPay = (shares.data ?? []).filter((s) => TO_PAY.includes(s.status));
   const isTrafficLead = canApprovePlan(me?.roles);
-  const pendingPlanDrafts = isTrafficLead ? (adminCounts.data?.pending_plan_drafts ?? 0) : 0;
-  const pendingRideDrafts = isTrafficLead ? (adminCounts.data?.pending_ride_drafts ?? 0) : 0;
+  const pendingPlanDrafts = isTrafficLead ? (adminCountsData?.pending_plan_drafts ?? 0) : 0;
+  const pendingRideDrafts = isTrafficLead ? (adminCountsData?.pending_ride_drafts ?? 0) : 0;
   const returnedDrafts = !isTrafficLead
-    ? (adminCounts.data?.my_returned_plan_drafts ?? 0) + (adminCounts.data?.my_returned_ride_drafts ?? 0)
+    ? (adminCountsData?.my_returned_plan_drafts ?? 0) + (adminCountsData?.my_returned_ride_drafts ?? 0)
     : 0;
 
   // Single event-first hero commitment.

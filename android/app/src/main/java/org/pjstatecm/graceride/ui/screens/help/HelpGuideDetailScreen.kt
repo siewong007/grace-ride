@@ -67,6 +67,7 @@ import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.NotifDestination
 import org.pjstatecm.graceride.ui.NotifLinkRouter
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.StatusPill
@@ -143,15 +144,20 @@ fun HelpGuideDetailScreen(
             else -> {
                 val g = state.guide!!
                 val summary = if (isZh) g.summaryZh.ifBlank { g.summaryEn } else g.summaryEn.ifBlank { g.summaryZh }
-                Column(
-                    Modifier
+                AdaptiveContentFrame(
+                    modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
-                        .verticalScroll(rememberScrollState())
-                        .navigationBarsPadding()
-                        .padding(Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                        .padding(padding),
+                    maxWidth = 720.dp,
                 ) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .navigationBarsPadding()
+                            .padding(Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
+                    ) {
                     if (!g.published) {
                         StatusPill(text = stringResource(R.string.help_guide_draft), kind = RideStatusKind.PENDING)
                         Spacer(Modifier.height(Spacing.xs))
@@ -339,6 +345,7 @@ fun HelpGuideDetailScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

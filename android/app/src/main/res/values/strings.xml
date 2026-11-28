@@ -714,7 +714,7 @@
 
     <!-- UX Redesign, Settings Sub-Screens, Live Map & Waze -->
     <string name="profile_appearance_lang">Appearance &amp; language</string>
-    <string name="profile_section_setup">Preferences &amp; setup</string>
+    <string name="profile_section_setup">Account &amp; setup</string>
     <string name="nav_chooser_title">Open turn-by-turn navigation</string>
     <string name="nav_app_title">Navigation app</string>
     <string name="nav_app_ask">Ask</string>
@@ -887,7 +887,7 @@
 
     <string name="traffic_rides_list_view">All rides</string>
     <string name="traffic_rides_drafts_view">Proposed changes</string>
-    <string name="traffic_rides_search_hint">Search passenger, driver, area…</string>
+    <string name="traffic_rides_search_hint">Search rides…</string>
     <string name="traffic_rides_date_all">All dates</string>
     <string name="traffic_rides_date_today">Today</string>
     <string name="traffic_rides_date_sunday">Sunday</string>
@@ -2114,4 +2114,37 @@
     <string name="settlement_custom_unbalanced_error">Custom shares must equal the net total before publishing.</string>
     <string name="help_guide_step_number">Step %1$d</string>
     <string name="common_image_load_failed">Unable to load image</string>
+    <string name="live_open_driver_maps">Open driver in Maps</string>
+    <plurals name="help_guide_steps_count_plural">
+        <item quantity="one">%d step</item>
+        <item quantity="other">%d steps</item>
+    </plurals>
+    <plurals name="costs_items_due_plural">
+        <item quantity="one">%d item awaiting payment</item>
+        <item quantity="other">%d items awaiting payment</item>
+    </plurals>
+    <plurals name="member_count_plural">
+        <item quantity="one">%d member</item>
+        <item quantity="other">%d members</item>
+    </plurals>
+    <plurals name="settlement_total_preview_plural">
+        <item quantity="one">Net %1$s across %2$d member</item>
+        <item quantity="other">Net %1$s across %2$d members</item>
+    </plurals>
+    <plurals name="members_total_page_plural">
+        <item quantity="one">%1$d member · Page %2$d/%3$d</item>
+        <item quantity="other">%1$d members · Page %2$d/%3$d</item>
+    </plurals>
+    <plurals name="home_admin_pending_members_plural">
+        <item quantity="one">%d pending member</item>
+        <item quantity="other">%d pending members</item>
+    </plurals>
+    <plurals name="traffic_plan_rides_count_plural">
+        <item quantity="one">%d ride</item>
+        <item quantity="other">%d rides</item>
+    </plurals>
+    <plurals name="traffic_live_trips_plural">
+        <item quantity="one">%d active ride</item>
+        <item quantity="other">%d active rides</item>
+    </plurals>
 </resources>

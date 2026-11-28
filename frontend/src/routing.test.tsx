@@ -97,12 +97,14 @@ const apiData: Record<string, unknown> = {
   },
 };
 
+const routeReloadMock = vi.fn();
+
 vi.mock('./api', () => ({
   useApi: (path: string | null) => ({
     data: path ? apiData[path] ?? null : null,
     loading: false,
     error: null,
-    reload: vi.fn(),
+    reload: path === '/driver/route' ? routeReloadMock : vi.fn(),
   }),
   post: vi.fn().mockResolvedValue({ ok: true }),
   del: vi.fn().mockResolvedValue({ ok: true }),
@@ -166,6 +168,30 @@ describe('DriverRouteCard', () => {
     );
     expect(screen.getByTestId('map')).toHaveAttribute('data-route', '4');
     expect(screen.getByText(/live traffic isn’t included/i)).toBeInTheDocument();
+  });
+
+  it('skips duplicate reload when refreshKey transitions from undefined to initial value, but reloads on subsequent change', () => {
+    routeReloadMock.mockClear();
+    const { rerender } = render(
+      <MemoryRouter>
+        <DriverRouteCard refreshKey={undefined} />
+      </MemoryRouter>,
+    );
+    expect(routeReloadMock).not.toHaveBeenCalled();
+
+    rerender(
+      <MemoryRouter>
+        <DriverRouteCard refreshKey="1:confirmed:" />
+      </MemoryRouter>,
+    );
+    expect(routeReloadMock).not.toHaveBeenCalled();
+
+    rerender(
+      <MemoryRouter>
+        <DriverRouteCard refreshKey="1:in_progress:" />
+      </MemoryRouter>,
+    );
+    expect(routeReloadMock).toHaveBeenCalledTimes(1);
   });
 });
 

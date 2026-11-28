@@ -67,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,6 +89,7 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -198,11 +200,12 @@ fun HelpScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding),
+        AdaptiveContentFrame(
+            maxWidth = 920.dp,
+            compactHorizontalPadding = 0.dp,
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
+            Column(Modifier.fillMaxSize()) {
             SingleChoiceSegmentedButtonRow(
                 Modifier
                     .fillMaxWidth()
@@ -413,6 +416,7 @@ fun HelpScreen(
                 }
             }
         }
+        }
     }
 
     if (showAskSheet) {
@@ -462,8 +466,9 @@ private fun GuideCard(
                 if (summary.isNotBlank()) {
                     Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
+                val stepCnt = guide.stepCount.coerceAtLeast(guide.steps.size)
                 Text(
-                    stringResource(R.string.help_guide_steps_count, guide.stepCount.coerceAtLeast(guide.steps.size)),
+                    pluralStringResource(R.plurals.help_guide_steps_count_plural, stepCnt, stepCnt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )

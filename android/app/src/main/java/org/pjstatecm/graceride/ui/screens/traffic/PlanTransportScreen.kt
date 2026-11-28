@@ -27,10 +27,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Accessible
@@ -111,6 +114,7 @@ import org.pjstatecm.graceride.domain.PlanDraftDiffSummary
 import org.pjstatecm.graceride.domain.EffectiveVisitor
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.PlanLogic
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -369,11 +373,16 @@ fun PlanTransportScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
-                    LazyColumn(
-                        Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    AdaptiveContentFrame(
+                        maxWidth = 920.dp,
+                        compactHorizontalPadding = 0.dp,
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        LazyColumn(
+                            Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
                         // Version / Draft Bar
                         item {
                             LazyRow(
@@ -633,6 +642,7 @@ fun PlanTransportScreen(
                                 },
                             )
                         }
+                        }
                     }
                 }
             }
@@ -868,10 +878,12 @@ private fun PlanBottomActionDock(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding(),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(
                 Modifier
+                    .widthIn(max = 920.dp)
                     .fillMaxWidth()
                     .animateContentSize(
                         animationSpec = if (animatorsEnabled()) tween(200, easing = GraceRideSpringEasing) else snap(),
@@ -1342,7 +1354,10 @@ private fun PlanDriverPickerSheet(
             if (ranked.isEmpty()) {
                 EmptyView(text = stringResource(R.string.common_empty_title))
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyColumn(
+                    Modifier.weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     items(ranked, key = { "pick-${it.id}" }) { d ->
                         val fits = PlanLogic.fits(d, ride, plan.rides, assign, driversById)
                         val sameArea = PlanLogic.servesArea(ride, d)
@@ -1449,6 +1464,7 @@ private fun ArrangeDiagnosisSheet(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = Spacing.md)
                 .padding(bottom = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -1505,7 +1521,7 @@ private fun NewDraftDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.plan_new_draft)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },

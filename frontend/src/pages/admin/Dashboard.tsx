@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useApi } from '../../api';
+import { isSessionLocked, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { Ride } from '../../components/RideCard';
 import {
@@ -35,7 +35,7 @@ import {
 import { auditActionLabel, auditItemLine } from '../../auditLabel';
 import { fmtAgo, fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 import { Can } from '../../perms';
-import { ADMIN_HOME } from '../../staffNav';
+import { ADMIN_HOME, useStaffNav } from '../../staffNav';
 import { getObjectLink } from './Audit';
 import { rideCompactRow } from './rideRows';
 
@@ -157,10 +157,23 @@ export default function Dashboard() {
   const nav = useNavigate();
   const [todayFilter, setTodayFilter] = useState<TodayFilter>('all');
 
-  const { data: d, error } = useApi<Dash>(
-    isStaff ? '/admin/dashboard' : null,
+  const staffNav = useStaffNav();
+  const standaloneDash = useApi<Dash>(
+    !staffNav.fromContext && isStaff ? '/admin/dashboard' : null,
     20000,
   );
+  const reloadDash = staffNav.reloadDash;
+  useEffect(() => {
+    if (!staffNav.fromContext || !isStaff) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && !isSessionLocked()) {
+        void reloadDash();
+      }
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [staffNav.fromContext, isStaff, reloadDash]);
+  const d = (staffNav.fromContext ? staffNav.counts : standaloneDash.data) as Dash | null;
+  const error = staffNav.fromContext ? staffNav.dashError : standaloneDash.error;
   const today = useApi<Ride[]>(
     rides ? `/admin/rides?date=${todayStr()}` : null,
     20000,

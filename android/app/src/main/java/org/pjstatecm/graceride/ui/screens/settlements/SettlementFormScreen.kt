@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -68,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -86,6 +88,7 @@ import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.SectionHeader
@@ -149,30 +152,38 @@ fun SettlementFormScreen(
         },
         bottomBar = {
             if (!state.loading) {
-                Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
+                Surface(color = MaterialTheme.colorScheme.surface) {
                     Column(
                         Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .imePadding()
-                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            .imePadding(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(
+                            Modifier
+                                .widthIn(max = 720.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                         ) {
-                            Text(
-                                stringResource(
-                                    R.string.settlement_total_preview,
-                                    Money.rm(state.netTotalCents),
-                                    state.selectedParticipants.size,
-                                ),
-                                style = MaterialTheme.typography.titleSmall.tabular(),
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    pluralStringResource(
+                                        R.plurals.settlement_total_preview_plural,
+                                        state.selectedParticipants.size,
+                                        Money.rm(state.netTotalCents),
+                                        state.selectedParticipants.size,
+                                    ),
+                                    style = MaterialTheme.typography.titleSmall.tabular(),
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f),
+                                )
                             if (state.splitMode == "equal" && state.selectedParticipants.isNotEmpty()) {
                                 val perShare = state.equalShareAmounts.firstOrNull() ?: 0L
                                 StatusPill(
@@ -248,6 +259,7 @@ fun SettlementFormScreen(
                     }
                 }
             }
+            }
         },
     ) { padding ->
         if (state.loading) {
@@ -274,15 +286,20 @@ fun SettlementFormScreen(
         }
         val visibleIds = remember(visibleParticipants) { visibleParticipants.map { it.userId }.toSet() }
 
-        Column(
-            Modifier
+        AdaptiveContentFrame(
+            modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(Spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                .padding(padding),
+            maxWidth = 720.dp,
         ) {
-            if (state.editingId == null && state.events.isNotEmpty() && eventId == null) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                if (state.editingId == null && state.events.isNotEmpty() && eventId == null) {
                 ExposedDropdownMenuBox(expanded = eventExpanded, onExpandedChange = { eventExpanded = it }) {
                     OutlinedTextField(
                         value = state.events.firstOrNull { it.id == state.selectedEventId }?.title ?: "",
@@ -560,6 +577,7 @@ fun SettlementFormScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            }
         }
     }
 
@@ -593,7 +611,10 @@ fun SettlementFormScreen(
                 }
             },
         ) {
-            DatePicker(state = datePickerState)
+            DatePicker(
+                state = datePickerState,
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            )
         }
     }
 

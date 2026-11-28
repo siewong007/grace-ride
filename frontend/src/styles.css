@@ -1916,6 +1916,7 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 .auth-card {
   width: 100%;
   max-width: 460px;
+  min-width: 0;
 }
 
 /* Sign-in: one centred card at every size. */
@@ -2047,6 +2048,7 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 .terms-measure {
   max-width: 68ch;
   width: 100%;
+  min-width: 0;
   margin: 0 auto;
 }
 .terms-intro {
@@ -2089,6 +2091,9 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 
 /* Open-source notices: one folded row per package, the licence text in a readable pre. */
 .licence-item {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
@@ -2125,6 +2130,7 @@ p.empty-title { font-weight: 400; color: var(--muted); }
   padding: var(--space-3);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  overflow-x: auto;
   font-family: var(--font);
   font-size: var(--fs-sm);
   line-height: 1.5;

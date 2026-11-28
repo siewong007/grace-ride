@@ -492,7 +492,7 @@ fun LiveTrackCard(
                         ) {
                             Icon(Icons.Outlined.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(Spacing.xs))
-                            Text(stringResource(R.string.common_open_maps))
+                            Text(stringResource(R.string.live_open_driver_maps))
                         }
                     }
                 } else {

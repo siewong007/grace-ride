@@ -4,10 +4,12 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.navigation.compose.rememberNavController
@@ -150,13 +152,9 @@ class ComposeUiTest {
             GraceRideTheme { LoginScreen(container) }
         }
         compose.waitUntil(5_000) {
-            try {
-                compose.onNodeWithText("Demo Member", substring = true).assertIsDisplayed()
-                true
-            } catch (_: AssertionError) {
-                false
-            }
+            compose.onAllNodesWithText("Demo Member", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("Demo Member", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test fun shareCardNeedsInfoShowsNoteAndResubmit() {

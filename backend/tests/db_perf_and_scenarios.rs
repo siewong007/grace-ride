@@ -575,10 +575,67 @@ async fn seed_scenarios_idempotency_api_smoke_reset_verify() {
 }
 
 #[tokio::test]
+async fn migration_0020_query_performance_indexes() {
+    let (_app, st) = common::setup().await;
+
+    let dropped: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes
+         WHERE schemaname = current_schema()
+           AND indexname = ANY($1)",
+    )
+    .bind(
+        &[
+            "idx_oauth_states_created_at",
+            "idx_reimbursements_plan_visitor",
+        ][..],
+    )
+    .fetch_all(&st.db)
+    .await
+    .unwrap();
+    assert!(
+        dropped.is_empty(),
+        "duplicate indexes from 0020 should be dropped, still present: {dropped:?}"
+    );
+
+    let expected = [
+        "idx_oauth_states_created",
+        "idx_reimbursements_plan_visitor_latest",
+        "idx_rides_pickup_status",
+        "idx_rides_updated_changes",
+        "idx_rides_event_active",
+        "idx_visitor_passes_ride_latest",
+        "idx_users_name_id",
+        "idx_event_signups_event_stats",
+        "idx_events_starts_active",
+        "idx_plan_visitors_event_seats",
+        "idx_reimbursements_open_queue",
+    ];
+    let present: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes
+         WHERE schemaname = current_schema()
+           AND indexname = ANY($1)",
+    )
+    .bind(&expected[..])
+    .fetch_all(&st.db)
+    .await
+    .unwrap();
+    for idx in expected {
+        assert!(
+            present.iter().any(|p| p == idx),
+            "expected index {idx} from 0020_query_performance to exist"
+        );
+    }
+}
+
+#[tokio::test]
 async fn explain_json_index_usage_at_scale() {
     let (_app, st) = common::setup().await;
     seed_scenarios(&st.db).await.unwrap();
     seed_scale(&st.db, 2000).await.unwrap();
+    sqlx::query("ANALYZE users, rides, reimbursements, events, event_signups")
+        .execute(&st.db)
+        .await
+        .unwrap();
 
     let (driver_id, pickup_at): (i64, String) = sqlx::query_as(
         "SELECT driver_id, pickup_at FROM rides WHERE demo_batch = 'scale-2026' AND driver_id IS NOT NULL LIMIT 1",
@@ -649,6 +706,26 @@ async fn explain_json_index_usage_at_scale() {
             format!(
                 "EXPLAIN (FORMAT JSON) SELECT id FROM event_signups WHERE event_id = {signup_event_id} AND LOWER(pass_code) = LOWER('{signup_pass_code}')"
             ),
+        ),
+        (
+            "idx_rides_pickup_status",
+            format!(
+                "EXPLAIN (FORMAT JSON) SELECT COUNT(*) FROM rides WHERE pickup_at >= '{today_str}T00:00' AND pickup_at <= '{today_str}T23:59:59'"
+            ),
+        ),
+        (
+            "idx_rides_updated_changes",
+            format!(
+                "EXPLAIN (FORMAT JSON) SELECT COUNT(*) FROM rides WHERE updated_at >= '{today_str}T00:00:00' AND (needs_attention = 1 OR status IN ('cancelled', 'no_show', 'alt_transport'))"
+            ),
+        ),
+        (
+            "idx_users_name_id",
+            "EXPLAIN (FORMAT JSON) SELECT id, name FROM users ORDER BY name ASC, id ASC LIMIT 50".to_string(),
+        ),
+        (
+            "idx_reimbursements_open_queue",
+            "EXPLAIN (FORMAT JSON) SELECT id FROM reimbursements WHERE status = 'pending' ORDER BY id DESC LIMIT 25".to_string(),
         ),
     ];
 

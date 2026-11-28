@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -57,6 +58,8 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
+import org.pjstatecm.graceride.ui.components.AdaptiveTwoColumnRow
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.GraceRideLiveMap
@@ -127,10 +130,11 @@ fun CarePassScreen(
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(Modifier.navigationBarsPadding()) {
+                    Column(Modifier.navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Column(
                             Modifier
+                                .widthIn(max = 720.dp)
                                 .fillMaxWidth()
                                 .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -217,157 +221,98 @@ fun CarePassScreen(
                 }.orEmpty()
                 val etaMins = care.location.eta?.durationS?.let { (it / 60.0).roundToInt().coerceAtLeast(1) }
 
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(horizontal = Spacing.sm),
-                    contentPadding = PaddingValues(vertical = Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                AdaptiveContentFrame(
+                    maxWidth = 920.dp,
+                    compactHorizontalPadding = 0.dp,
+                    modifier = Modifier.fillMaxSize().padding(padding),
                 ) {
-                    item {
-                        OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column(
-                                Modifier.padding(Spacing.sm),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = Spacing.sm),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        contentPadding = PaddingValues(top = Spacing.sm, bottom = Spacing.lg),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
+                        val headerCard: @Composable () -> Unit = {
+                            OutlinedCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             ) {
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        stringResource(R.string.care_title, care.riderName.ifBlank { care.label }),
-                                        style = MaterialTheme.typography.headlineSmall,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    RideStatusPill(care.status)
-                                }
-                                if (care.leg == "return") {
-                                    AssistChip(
-                                        onClick = {},
-                                        label = { Text(stringResource(R.string.care_return_leg)) },
-                                    )
-                                }
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = MaterialTheme.shapes.small,
+                                Column(
+                                    Modifier.padding(Spacing.sm),
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                                 ) {
                                     Row(
-                                        Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs),
                                     ) {
-                                        Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Text(
-                                            stringResource(R.string.care_privacy_hint),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            stringResource(R.string.care_title, care.riderName.ifBlank { care.label }),
+                                            style = MaterialTheme.typography.headlineSmall,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        RideStatusPill(care.status)
+                                    }
+                                    if (care.leg == "return") {
+                                        AssistChip(
+                                            onClick = {},
+                                            label = { Text(stringResource(R.string.care_return_leg)) },
                                         )
                                     }
-                                }
-                                when {
-                                    care.completedAt != null -> CalloutBanner(
-                                        icon = Icons.Outlined.CheckCircle,
-                                        text = stringResource(R.string.care_arrived_safely, care.destination),
-                                        containerColor = statusColors.successSoft,
-                                        contentColor = statusColors.success,
-                                    )
-                                    care.pickedUpAt != null -> CalloutBanner(
-                                        icon = Icons.Outlined.DirectionsCar,
-                                        text = stringResource(R.string.care_picked_up_on_way, care.destination),
-                                        containerColor = statusColors.infoSoft,
-                                        contentColor = statusColors.info,
-                                    )
-                                    care.arrivedAtGateAt != null -> CalloutBanner(
-                                        icon = Icons.Outlined.DirectionsCar,
-                                        text = stringResource(R.string.visit_at_gate),
-                                        containerColor = statusColors.successSoft,
-                                        contentColor = statusColors.success,
-                                    )
-                                }
-                                if (care.delayMinutes > 0) {
-                                    CalloutBanner(
-                                        icon = Icons.Outlined.Schedule,
-                                        text = stringResource(R.string.visit_driver_late, care.delayMinutes),
-                                        containerColor = statusColors.warningSoft,
-                                        contentColor = statusColors.warning,
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    item {
-                        OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column(
-                                Modifier.padding(Spacing.sm),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            ) {
-                                Text(
-                                    stringResource(R.string.visit_time),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(KlTime.display(care.pickupAt), style = MaterialTheme.typography.titleMedium)
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                Text(
-                                    stringResource(R.string.care_route),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    "${care.area.name} → ${care.destination}",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                etaMins?.let { mins ->
-                                    Text(
-                                        stringResource(R.string.care_eta_mins, mins),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                                care.driver?.let { driver ->
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                    Text(
-                                        stringResource(R.string.visit_driver),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(driver.name, style = MaterialTheme.typography.bodyLarge)
-                                    if (vehicleText.isNotBlank()) {
-                                        Text(
-                                            vehicleText,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    if (!driver.phone.isNullOrBlank() && activeCare == null) {
-                                        FilledTonalButton(
-                                            onClick = { dialPhone(context, driver.phone) },
-                                            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = MaterialTheme.shapes.small,
+                                    ) {
+                                        Row(
+                                            Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs),
                                         ) {
-                                            Icon(Icons.Outlined.Call, contentDescription = null, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(Spacing.xs))
-                                            Text(stringResource(R.string.visit_call_driver))
+                                            Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Text(
+                                                stringResource(R.string.care_privacy_hint),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
                                         }
                                     }
+                                    when {
+                                        care.completedAt != null -> CalloutBanner(
+                                            icon = Icons.Outlined.CheckCircle,
+                                            text = stringResource(R.string.care_arrived_safely, care.destination),
+                                            containerColor = statusColors.successSoft,
+                                            contentColor = statusColors.success,
+                                        )
+                                        care.pickedUpAt != null -> CalloutBanner(
+                                            icon = Icons.Outlined.DirectionsCar,
+                                            text = stringResource(R.string.care_picked_up_on_way, care.destination),
+                                            containerColor = statusColors.infoSoft,
+                                            contentColor = statusColors.info,
+                                        )
+                                        care.arrivedAtGateAt != null -> CalloutBanner(
+                                            icon = Icons.Outlined.DirectionsCar,
+                                            text = stringResource(R.string.visit_at_gate),
+                                            containerColor = statusColors.successSoft,
+                                            contentColor = statusColors.success,
+                                        )
+                                    }
+                                    if (care.delayMinutes > 0) {
+                                        CalloutBanner(
+                                            icon = Icons.Outlined.Schedule,
+                                            text = stringResource(R.string.visit_driver_late, care.delayMinutes),
+                                            containerColor = statusColors.warningSoft,
+                                            contentColor = statusColors.warning,
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    val loc = care.location
-                    if (loc.sharing && loc.lat != null && loc.lng != null) {
-                        item {
+                        val routeDriverCard: @Composable () -> Unit = {
                             OutlinedCard(
                                 modifier = Modifier.fillMaxWidth(),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -377,26 +322,103 @@ fun CarePassScreen(
                                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                                 ) {
                                     Text(
-                                        stringResource(R.string.visit_driver_here),
-                                        style = MaterialTheme.typography.titleSmall,
+                                        stringResource(R.string.visit_time),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    GraceRideLiveMap(
-                                        points = listOf(
-                                            LiveMapPoint(
-                                                id = "driver",
-                                                lat = loc.lat,
-                                                lng = loc.lng,
-                                                label = care.driver?.name.orEmpty(),
-                                                kind = MapMarkerKind.CAR,
-                                            ),
-                                        ),
-                                        showZoomControls = true,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(200.dp),
+                                    Text(KlTime.display(care.pickupAt), style = MaterialTheme.typography.titleMedium)
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    Text(
+                                        stringResource(R.string.care_route),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    Text(
+                                        "${care.area.name} → ${care.destination}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                    )
+                                    etaMins?.let { mins ->
+                                        Text(
+                                            stringResource(R.string.care_eta_mins, mins),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    care.driver?.let { driver ->
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                        Text(
+                                            stringResource(R.string.visit_driver),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Text(driver.name, style = MaterialTheme.typography.bodyLarge)
+                                        if (vehicleText.isNotBlank()) {
+                                            Text(
+                                                vehicleText,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        if (!driver.phone.isNullOrBlank() && activeCare == null) {
+                                            FilledTonalButton(
+                                                onClick = { dialPhone(context, driver.phone) },
+                                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                            ) {
+                                                Icon(Icons.Outlined.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                Spacer(Modifier.width(Spacing.xs))
+                                                Text(stringResource(R.string.visit_call_driver))
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                        }
+
+                        val loc = care.location
+                        if (loc.sharing && loc.lat != null && loc.lng != null) {
+                            item {
+                                AdaptiveTwoColumnRow(
+                                    twoColumnBreakpoint = 680.dp,
+                                    first = {
+                                        headerCard()
+                                        routeDriverCard()
+                                    },
+                                    second = {
+                                        OutlinedCard(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                        ) {
+                                            Column(
+                                                Modifier.padding(Spacing.sm),
+                                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                            ) {
+                                                Text(
+                                                    stringResource(R.string.visit_driver_here),
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                )
+                                                GraceRideLiveMap(
+                                                    points = listOf(
+                                                        LiveMapPoint(
+                                                            id = "driver",
+                                                            lat = loc.lat,
+                                                            lng = loc.lng,
+                                                            label = care.driver?.name.orEmpty(),
+                                                            kind = MapMarkerKind.CAR,
+                                                        ),
+                                                    ),
+                                                    showZoomControls = true,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(220.dp),
+                                                )
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        } else {
+                            item { headerCard() }
+                            item { routeDriverCard() }
                         }
                     }
                 }

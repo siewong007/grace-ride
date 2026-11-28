@@ -6090,7 +6090,19 @@ pub async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
         for ri in 0..ride_count {
             let rid = SCALE_ENTITY_ID_BASE + ri;
             let pid = active_members[(ri as usize) % active_members.len()];
-            let status = ride_statuses[(ri as usize) % ride_statuses.len()];
+            let raw_status = ride_statuses[(ri as usize) % ride_statuses.len()];
+            let day_off = (ri % 60) - 30;
+            // Cap synthetic in_progress rides (<=2 drivers) so `make seed-full` does not exhaust
+            // the default max_live_drivers=10 cap and block drivers from starting real trips.
+            let status = if raw_status == "in_progress" && ri >= 16 {
+                if day_off <= 0 {
+                    "completed"
+                } else {
+                    "confirmed"
+                }
+            } else {
+                raw_status
+            };
             let did = if status == "pending_driver" || active_drivers.is_empty() {
                 None
             } else {
@@ -6106,7 +6118,6 @@ pub async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
             } else {
                 Some(e_ids[(ri as usize) % e_ids.len()])
             };
-            let day_off = (ri % 60) - 30;
             let dt = today + Duration::days(day_off);
             let pickup_at = format!("{}T{:02}:{:02}:00", dt, 7 + (ri % 13), (ri % 4) * 15);
             let trip = (matches!(status, "confirmed" | "in_progress" | "completed")

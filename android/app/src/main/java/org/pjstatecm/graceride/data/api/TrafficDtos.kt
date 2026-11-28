@@ -1,7 +1,19 @@
 package org.pjstatecm.graceride.data.api
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /** Staff dashboard summary counters surfaced on Home / Traffic badges. */
 @Serializable
@@ -416,6 +428,32 @@ data class AdminDriverVehicleDto(
     val seats: Long? = null,
 )
 
+/** Decodes driver areas returned either as a comma-separated string or as a JSON string array. */
+object StringOrListSerializer : KSerializer<List<String>> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("StringOrList", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): List<String> {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return decoder.decodeString().split(',', '，').map { it.trim() }.filter { it.isNotEmpty() }
+        return when (val el = jsonDecoder.decodeJsonElement()) {
+            is JsonNull -> emptyList()
+            is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            is JsonPrimitive -> (el.contentOrNull ?: "").split(',', '，').map { it.trim() }.filter { it.isNotEmpty() }
+            else -> emptyList()
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: List<String>) {
+        val jsonEncoder = encoder as? JsonEncoder
+        if (jsonEncoder != null) {
+            jsonEncoder.encodeJsonElement(JsonArray(value.map(::JsonPrimitive)))
+        } else {
+            encoder.encodeString(value.joinToString(", "))
+        }
+    }
+}
+
 @Serializable
 data class AdminDriverDto(
     val id: Long,
@@ -423,7 +461,7 @@ data class AdminDriverDto(
     @SerialName("carpool_enabled") val carpoolEnabled: Boolean = true,
     @SerialName("spare_seats") val spareSeats: Long = 3,
     val vehicle: AdminDriverVehicleDto? = null,
-    val areas: List<String> = emptyList(),
+    @Serializable(with = StringOrListSerializer::class) val areas: List<String> = emptyList(),
 )
 
 // ---------------- Single-Ride Change Drafts & Staff Actions ----------------

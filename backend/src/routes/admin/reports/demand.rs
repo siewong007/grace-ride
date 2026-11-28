@@ -55,7 +55,25 @@ pub(in crate::routes::admin) async fn demand_report(
     let global_scope = u.traffic_is_global();
     let scope_creator: Option<i64> = if global_scope { None } else { Some(u.id) };
 
-    let rows: Vec<DemandRow> = sqlx::query_as(
+    let build_ride_filters = |has_group: Option<i64>, creator: Option<i64>| -> (String, Vec<i64>) {
+        let mut s = String::new();
+        let mut binds = Vec::new();
+        if let Some(cid) = creator {
+            binds.push(cid);
+            s.push_str(&format!(
+                " AND r.event_id IN (SELECT id FROM events WHERE created_by = ${})",
+                2 + binds.len()
+            ));
+        }
+        if let Some(gid) = has_group {
+            binds.push(gid);
+            s.push_str(&format!(" AND r.as_group_id = ${}", 2 + binds.len()));
+        }
+        (s, binds)
+    };
+
+    let (ride_extra_sql, ride_extra_binds) = build_ride_filters(q.group_id, scope_creator);
+    let rows_sql = format!(
         "SELECT r.pickup_area_id AS area_id, COALESCE(a.name, '') AS area_zh, COALESCE(a.name, '') AS area_en,
                 r.pickup_at, r.status, r.driver_id, r.passenger_id, r.seats AS seats_needed,
                 COALESCE(r.assistance, '') AS assistance, COALESCE(r.leg, 'outbound') AS leg,
@@ -63,52 +81,66 @@ pub(in crate::routes::admin) async fn demand_report(
          FROM rides r
          LEFT JOIN areas a ON a.id = r.pickup_area_id
          LEFT JOIN groups g ON g.id = r.as_group_id
-         WHERE r.pickup_at >= $1 AND r.pickup_at < $2
-           AND ($3::BIGINT IS NULL OR r.event_id IN (SELECT id FROM events WHERE created_by = $3))
-           AND ($4::BIGINT IS NULL OR r.as_group_id = $4)",
-    )
-    .bind(&w.start)
-    .bind(&w.end)
-    .bind(scope_creator)
-    .bind(q.group_id)
-    .fetch_all(&st.db)
-    .await?;
+         WHERE r.pickup_at >= $1 AND r.pickup_at < $2{ride_extra_sql}"
+    );
+    let mut rows_q = sqlx::query_as::<_, DemandRow>(sqlx::AssertSqlSafe(&*rows_sql))
+        .bind(&w.start)
+        .bind(&w.end);
+    for b in &ride_extra_binds {
+        rows_q = rows_q.bind(*b);
+    }
 
-    let (plan_visitors_count, plan_visitors_seats): (Option<i64>, Option<i64>) =
+    let pv_scope_sql = if scope_creator.is_some() {
+        " AND e.created_by = $3"
+    } else {
+        ""
+    };
+    let pv_sql = format!(
+        "SELECT COUNT(*)::BIGINT, COALESCE(SUM(pv.seats), 0)::BIGINT
+         FROM plan_visitors pv
+         JOIN events e ON e.id = pv.event_id
+         WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'{pv_scope_sql}"
+    );
+    let pv_fut = async {
         if q.group_id.is_some() {
-            (None, None)
-        } else {
-            let (cnt, seats): (i64, i64) = sqlx::query_as(
-                "SELECT COUNT(*)::BIGINT, COALESCE(SUM(pv.seats), 0)::BIGINT
-                 FROM plan_visitors pv
-                 JOIN events e ON e.id = pv.event_id
-                 WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'
-                   AND ($3::BIGINT IS NULL OR e.created_by = $3)",
-            )
+            return Ok::<_, crate::error::AppError>((None, None));
+        }
+        let mut pq = sqlx::query_as::<_, (i64, i64)>(sqlx::AssertSqlSafe(&*pv_sql))
             .bind(&w.start)
-            .bind(&w.end)
-            .bind(scope_creator)
-            .fetch_one(&st.db)
-            .await?;
-            (Some(cnt), Some(seats))
-        };
+            .bind(&w.end);
+        if let Some(cid) = scope_creator {
+            pq = pq.bind(cid);
+        }
+        let (cnt, seats) = pq.fetch_one(&st.db).await?;
+        Ok((Some(cnt), Some(seats)))
+    };
 
-    let (visitor_passes_count,): (i64,) = sqlx::query_as(
+    let mut vp_sql = String::from(
         "SELECT COUNT(*)::BIGINT
          FROM visitor_passes vp
          JOIN events e ON e.id = vp.event_id
-         WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'
-           AND ($3::BIGINT IS NULL OR e.created_by = $3)
-           AND ($4::BIGINT IS NULL OR vp.host_group_id = $4)",
-    )
-    .bind(&w.start)
-    .bind(&w.end)
-    .bind(scope_creator)
-    .bind(q.group_id)
-    .fetch_one(&st.db)
-    .await?;
+         WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'",
+    );
+    let mut vp_binds = Vec::new();
+    if let Some(cid) = scope_creator {
+        vp_binds.push(cid);
+        vp_sql.push_str(&format!(" AND e.created_by = ${}", 2 + vp_binds.len()));
+    }
+    if let Some(gid) = q.group_id {
+        vp_binds.push(gid);
+        vp_sql.push_str(&format!(" AND vp.host_group_id = ${}", 2 + vp_binds.len()));
+    }
+    let mut vp_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*vp_sql))
+        .bind(&w.start)
+        .bind(&w.end);
+    for b in &vp_binds {
+        vp_q = vp_q.bind(*b);
+    }
 
-    let drivers_by_area: HashMap<i64, i64> = if global_scope {
+    let drivers_fut = async {
+        if !global_scope {
+            return Ok::<_, crate::error::AppError>(HashMap::new());
+        }
         let drive_cond = sql_holds("u", Perm(Page::Drive, Act::Create));
         let area_rows: Vec<(i64, i64)> = sqlx::query_as(crate::dyn_sql!(
             "SELECT da.area_id, COUNT(DISTINCT da.user_id)::BIGINT
@@ -119,10 +151,45 @@ pub(in crate::routes::admin) async fn demand_report(
         ))
         .fetch_all(&st.db)
         .await?;
-        area_rows.into_iter().collect()
-    } else {
-        HashMap::new()
+        Ok(area_rows.into_iter().collect())
     };
+
+    let prev_win = prev_period_window(&w);
+    let prev_sql = format!(
+        "SELECT
+            COUNT(*) FILTER (WHERE r.status <> 'cancelled')::BIGINT,
+            COUNT(*) FILTER (WHERE r.status IN ('confirmed', 'in_progress', 'completed'))::BIGINT,
+            COUNT(*) FILTER (WHERE r.status NOT IN ('cancelled', 'no_show', 'alt_transport') AND r.driver_id IS NULL)::BIGINT
+         FROM rides r
+         WHERE r.pickup_at >= $1 AND r.pickup_at < $2{ride_extra_sql}"
+    );
+    let prev_fut = async {
+        let Some(pw) = prev_win.as_ref() else {
+            return Ok::<_, crate::error::AppError>(None);
+        };
+        let mut pq = sqlx::query_as::<_, (i64, i64, i64)>(sqlx::AssertSqlSafe(&*prev_sql))
+            .bind(&pw.start)
+            .bind(&pw.end);
+        for b in &ride_extra_binds {
+            pq = pq.bind(*b);
+        }
+        let row = pq.fetch_one(&st.db).await?;
+        Ok(Some((pw.period_label.clone(), row)))
+    };
+
+    let (
+        rows,
+        (plan_visitors_count, plan_visitors_seats),
+        visitor_passes_count,
+        drivers_by_area,
+        prev_stats,
+    ) = tokio::try_join!(
+        async { Ok::<_, crate::error::AppError>(rows_q.fetch_all(&st.db).await?) },
+        pv_fut,
+        async { Ok::<_, crate::error::AppError>(vp_q.fetch_one(&st.db).await?) },
+        drivers_fut,
+        prev_fut,
+    )?;
 
     let mut total_requests = 0_i64;
     let mut fulfilled = 0_i64;
@@ -365,37 +432,22 @@ pub(in crate::routes::admin) async fn demand_report(
         100
     };
 
-    let comparison = if let Some(pw) = prev_period_window(&w) {
-        let (prev_total, prev_fulfilled, prev_unfilled): (i64, i64, i64) = sqlx::query_as(
-            "SELECT
-                COUNT(*) FILTER (WHERE r.status <> 'cancelled')::BIGINT,
-                COUNT(*) FILTER (WHERE r.status IN ('confirmed', 'in_progress', 'completed'))::BIGINT,
-                COUNT(*) FILTER (WHERE r.status NOT IN ('cancelled', 'no_show', 'alt_transport') AND r.driver_id IS NULL)::BIGINT
-             FROM rides r
-             WHERE r.pickup_at >= $1 AND r.pickup_at < $2
-               AND ($3::BIGINT IS NULL OR r.event_id IN (SELECT id FROM events WHERE created_by = $3))
-               AND ($4::BIGINT IS NULL OR r.as_group_id = $4)",
-        )
-        .bind(&pw.start)
-        .bind(&pw.end)
-        .bind(scope_creator)
-        .bind(q.group_id)
-        .fetch_one(&st.db)
-        .await?;
-        let prev_rate = if prev_total > 0 {
-            (prev_fulfilled * 100) / prev_total
+    let comparison =
+        if let Some((prev_period, (prev_total, prev_fulfilled, prev_unfilled))) = prev_stats {
+            let prev_rate = if prev_total > 0 {
+                (prev_fulfilled * 100) / prev_total
+            } else {
+                100
+            };
+            json!({
+                "prev_period": prev_period,
+                "total_requests_delta": total_requests - prev_total,
+                "unfilled_delta": unfilled - prev_unfilled,
+                "fulfillment_rate_delta": fulfillment_rate_pct - prev_rate,
+            })
         } else {
-            100
+            Value::Null
         };
-        json!({
-            "prev_period": pw.period_label,
-            "total_requests_delta": total_requests - prev_total,
-            "unfilled_delta": unfilled - prev_unfilled,
-            "fulfillment_rate_delta": fulfillment_rate_pct - prev_rate,
-        })
-    } else {
-        Value::Null
-    };
 
     Ok(Json(json!({
         "scope": if global_scope { "global" } else { "own_events" },

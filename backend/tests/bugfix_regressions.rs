@@ -659,3 +659,75 @@ async fn event_self_transport_persists_and_clears_on_ride_or_withdraw() {
     .await;
     assert_eq!(detail2.json["my_signup"]["self_transport"], false);
 }
+
+#[tokio::test]
+async fn proxy_caregiver_access_normalizes_rider_name_case_and_whitespace() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let caregiver = login(&st, "sophie@example.org").await;
+    let other = login(&st, "amina@example.org").await;
+    let mid = uid(&st, "member@example.org").await;
+    let cgid = uid(&st, "sophie@example.org").await;
+    let eid = event_for(&st, mid, &in_hours(48), "PROXYCG1").await;
+
+    sqlx::query("INSERT INTO event_signups (event_id, user_id, status) VALUES ($1,$2,'going')")
+        .bind(eid)
+        .bind(mid)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    let pr = call(
+        &app,
+        Method::POST,
+        "/api/proxy-riders",
+        Some(&member),
+        Some(json!({ "name": "Uncle Tan", "caregiver_user_id": cgid })),
+    )
+    .await;
+    assert_eq!(pr.status, StatusCode::OK, "{}", pr.json);
+
+    let area_id: i64 =
+        sqlx::query_scalar("SELECT id FROM areas WHERE active = 1 ORDER BY id LIMIT 1")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let ride_id: i64 = sqlx::query_scalar(
+        "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, status, is_proxy, rider_name)
+         VALUES ($1, $2, $3, $4, '10 Jalan Test', 'PJ State CMC', 1, '', 'pending_driver', 1, '  uncle tan  ')
+         RETURNING id",
+    )
+    .bind(mid)
+    .bind(eid)
+    .bind(in_hours(24))
+    .bind(area_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let cg_res = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{ride_id}"),
+        Some(&caregiver),
+        None,
+    )
+    .await;
+    assert_eq!(cg_res.status, StatusCode::OK, "{}", cg_res.json);
+    assert_eq!(cg_res.json["id"], ride_id);
+
+    let other_res = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{ride_id}"),
+        Some(&other),
+        None,
+    )
+    .await;
+    assert_eq!(
+        other_res.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        other_res.json
+    );
+}

@@ -68,6 +68,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -79,6 +80,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.AdaptiveContentFrame
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
@@ -166,11 +168,12 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
                         onRefresh = vm::refresh,
                         modifier = Modifier.weight(1f),
                     ) {
-                        LazyColumn(
-                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            contentPadding = PaddingValues(vertical = Spacing.xs),
-                        ) {
+                        AdaptiveContentFrame(maxWidth = 840.dp, compactHorizontalPadding = 0.dp) {
+                            LazyColumn(
+                                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                contentPadding = PaddingValues(vertical = Spacing.xs),
+                            ) {
                             if (dueShares.isNotEmpty()) {
                                 item(key = "due-summary") {
                                     OutlinedCard(
@@ -203,7 +206,7 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
                                                     color = MaterialTheme.colorScheme.onSurface,
                                                 )
                                                 Text(
-                                                    stringResource(R.string.costs_items_due, dueShares.size),
+                                                    pluralStringResource(R.plurals.costs_items_due_plural, dueShares.size, dueShares.size),
                                                     style = MaterialTheme.typography.bodyMedium.tabular(),
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
@@ -228,6 +231,7 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
                                     modifier = Modifier.animateItem(),
                                 )
                             }
+                        }
                         }
                     }
                 }

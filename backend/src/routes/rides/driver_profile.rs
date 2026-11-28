@@ -63,7 +63,16 @@ pub(super) async fn driver_requests(
         ));
     }
     let sql = format!(
-        "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 100",
+        "WITH picked AS MATERIALIZED (
+             SELECT r.id, ROW_NUMBER() OVER () AS _ord
+             FROM (
+                 SELECT r.id FROM rides r WHERE {} ORDER BY r.pickup_at LIMIT 100
+             ) r
+         )
+         {RIDE_SELECT}
+         JOIN picked p2 ON p2.id = r.id
+         WHERE r.id IN (SELECT id FROM picked)
+         ORDER BY p2._ord",
         conds.join(" AND ")
     );
     let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql))
